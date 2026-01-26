@@ -31,7 +31,6 @@ def send_push(message):
         response = conn.getresponse()
         print(f"📲 PUSH RESULT: {response.status} {response.reason}")
         
-        # If it's not '200 OK', print the error message from Pushover
         if response.status != 200:
             print(f"⚠️ Pushover Error Details: {response.read().decode()}")
         # -------------------------
@@ -40,38 +39,29 @@ def send_push(message):
         print(f"❌ Push failed: {e}")
 
 def run_check():
-    # Print current time
     now = datetime.now().strftime("%I:%M %p")
     print(f"[{now}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
-        # headless=True is REQUIRED for Railway
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         
         try:
-            # --- LOGIN ---
+            # LOGIN
             page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do")
-            
             frame = page.frames[0]
-            # Wait for login box
             frame.locator("#userId").wait_for(state="visible", timeout=10000)
-            
             frame.locator("#userId").fill(SF_USERNAME, force=True)
             frame.locator("#userPin").fill(SF_PASSWORD, force=True)
             frame.locator("#userPin").press("Enter")
-            
             page.wait_for_load_state('networkidle')
 
-            # --- CHECK JOBS ---
-            # Click the tab
+            # CHECK JOBS
             page.locator("#available-tab-link").wait_for(state="visible", timeout=15000)
             page.locator("#available-tab-link").click()
-            
-            # Wait 15 seconds for the list to load (Cloud servers can be slow)
             time.sleep(15) 
             
-            # --- ROBUST TEXT CHECK ---
+            # ANALYZE
             main_text = page.locator("body").inner_text().lower()
             try:
                 frame_text = page.frames[0].locator("body").inner_text().lower()
@@ -84,12 +74,11 @@ def run_check():
             if target_phrase in combined_text:
                 print(f"   ✅ Clean scan: No jobs found.")
             else:
-                # Double Check
                 if "date" in combined_text or "job" in combined_text or "location" in combined_text:
                     print("   🚨 JOB DETECTED!")
                     send_push("🚨 JOBS AVAILABLE! Go to SmartFind now!")
                 else:
-                    print("   ⚠️ Scan ambiguous (Page didn't load right). No alert sent.")
+                    print("   ⚠️ Scan ambiguous. No alert sent.")
 
         except Exception as e:
             print(f"   ❌ Error checking jobs: {e}")
@@ -98,6 +87,11 @@ def run_check():
 
 if __name__ == "__main__":
     print("🤖 Bot is Online. Press Ctrl+C to stop.")
+    
+    # --- NEW: SEND TEST NOTIFICATION ON STARTUP ---
+    print("📲 Sending Test Notification to verify keys...")
+    send_push("✅ Bot Connected: Scanning has started.")
+    # ----------------------------------------------
     
     while True:
         run_check()
