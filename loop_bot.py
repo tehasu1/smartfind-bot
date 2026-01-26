@@ -48,20 +48,19 @@ def get_active_job_ids(page):
         
         combined_text = (main_text + "\n" + frame_text)
 
-        # CHECK 1: Is the list empty?
+        # CHECK 1: Is the list explicitly empty?
         if "no jobs available" in combined_text.lower():
             return set() # Return empty set
 
         # CHECK 2: Extract Job IDs
-        # Looks for patterns like "Job ID: 123456" or "Job 123456"
-        # \d{5,} means "look for 5 or more digits in a row" to avoid finding dates/times
-        found_ids = set(re.findall(r"(?:Job|ID)\D{0,10}(\d{5,})", combined_text, re.IGNORECASE))
+        # STRICTER REGEX: Look for "Job ID" nearby digits to avoid false matches.
+        # This will catch "Job ID: 123456" or "Job Number 123456"
+        found_ids = set(re.findall(r"(?:Job|ID)\D{0,20}(\d{5,})", combined_text, re.IGNORECASE))
         
-        # Fallback: If we see "Date/Location" but Regex found NO IDs, 
-        # return a dummy ID so we still get an alert.
-        if not found_ids and ("date" in combined_text.lower() or "location" in combined_text.lower()):
-            return {"UNKNOWN_JOB"}
-
+        # --- DELETED THE 'FALLBACK' CHECK HERE ---
+        # We no longer look for "Date" or "Location" blindly.
+        # If found_ids is empty, we trust that there are no jobs.
+        
         return found_ids
 
     except Exception as e:
@@ -72,11 +71,10 @@ def run_bot():
     print("🤖 Bot is Online. Tracking unique Job IDs.")
     
     # MEMORY: Keeps track of jobs we already notified about
-    # We start empty. The first scan will find existing jobs and notify.
     known_jobs = set()
 
     # Send startup test
-    send_push("✅ Bot Online: Intelligent Job Tracking Active.")
+    send_push("✅ Bot Online: Strict ID Checking Active.")
 
     while True:
         now = datetime.now().strftime("%I:%M %p")
@@ -106,7 +104,6 @@ def run_bot():
                 
                 if not current_jobs:
                     print(f"   ✅ Clean scan: No jobs found.")
-                    # If list is empty, clear memory so we can re-alert if they come back later
                     known_jobs.clear()
                 
                 else:
@@ -115,17 +112,9 @@ def run_bot():
                     
                     if new_jobs:
                         print(f"   🚨 NEW JOBS DETECTED: {new_jobs}")
-                        
-                        if "UNKNOWN_JOB" in new_jobs:
-                            msg = "🚨 JOBS AVAILABLE! (ID not read, check site!)"
-                        else:
-                            # Create a nice message like: "New Jobs: #12345, #67890"
-                            ids_str = ", #".join(new_jobs)
-                            msg = f"🚨 {len(new_jobs)} NEW JOBS: #{ids_str}"
-                        
+                        ids_str = ", #".join(new_jobs)
+                        msg = f"🚨 {len(new_jobs)} NEW JOBS: #{ids_str}"
                         send_push(msg)
-                        
-                        # Add these new jobs to our memory
                         known_jobs.update(new_jobs)
                     else:
                         print(f"   🤫 Jobs present ({current_jobs}), but already notified.")
