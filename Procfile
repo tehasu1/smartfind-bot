@@ -1,0 +1,1 @@
+worker: playwright install chromium && python3 loop_bot.py
