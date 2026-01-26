@@ -15,6 +15,7 @@ PUSHOVER_USER = os.getenv("PUSHOVER_USER")
 PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 
 def send_push(message):
+    """Sends a notification with detailed error logging"""
     try:
         context = ssl._create_unverified_context()
         conn = http.client.HTTPSConnection("api.pushover.net:443", context=context)
@@ -25,7 +26,16 @@ def send_push(message):
             "title": "SmartFind Bot"
         })
         conn.request("POST", "/1/messages.json", payload, {"Content-type": "application/x-www-form-urlencoded"})
-        print(f"📲 PUSH SENT: {message}")
+        
+        # --- DEBUGGING SECTION ---
+        response = conn.getresponse()
+        print(f"📲 PUSH RESULT: {response.status} {response.reason}")
+        
+        # If it's not '200 OK', print the error message from Pushover
+        if response.status != 200:
+            print(f"⚠️ Pushover Error Details: {response.read().decode()}")
+        # -------------------------
+
     except Exception as e:
         print(f"❌ Push failed: {e}")
 
@@ -35,7 +45,7 @@ def run_check():
     print(f"[{now}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
-        # headless=True means INVISIBLE browser. Change to False if you want to see it.
+        # headless=True is REQUIRED for Railway
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         
@@ -58,8 +68,8 @@ def run_check():
             page.locator("#available-tab-link").wait_for(state="visible", timeout=15000)
             page.locator("#available-tab-link").click()
             
-            # Wait for text to load
-            time.sleep(5) 
+            # Wait 15 seconds for the list to load (Cloud servers can be slow)
+            time.sleep(15) 
             
             # --- ROBUST TEXT CHECK ---
             main_text = page.locator("body").inner_text().lower()
@@ -79,7 +89,7 @@ def run_check():
                     print("   🚨 JOB DETECTED!")
                     send_push("🚨 JOBS AVAILABLE! Go to SmartFind now!")
                 else:
-                    print("   ⚠️ Scan ambiguous. No alert sent.")
+                    print("   ⚠️ Scan ambiguous (Page didn't load right). No alert sent.")
 
         except Exception as e:
             print(f"   ❌ Error checking jobs: {e}")
