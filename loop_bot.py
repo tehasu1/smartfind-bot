@@ -1,5 +1,6 @@
 import os
 import time
+import re
 import http.client
 import urllib.parse
 import ssl
@@ -15,7 +16,7 @@ PUSHOVER_USER = os.getenv("PUSHOVER_USER")
 PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 
 def send_push(message):
-    """Sends a notification with detailed error logging"""
+    """Sends a notification to Pushover"""
     try:
         context = ssl._create_unverified_context()
         conn = http.client.HTTPSConnection("api.pushover.net:443", context=context)
@@ -29,103 +30,113 @@ def send_push(message):
         
         response = conn.getresponse()
         print(f"📲 PUSH RESULT: {response.status} {response.reason}")
-        
-        if response.status != 200:
-            print(f"⚠️ Pushover Error Details: {response.read().decode()}")
-
     except Exception as e:
         print(f"❌ Push failed: {e}")
 
-def check_for_jobs():
+def get_active_job_ids(page):
     """
-    Returns TRUE if jobs are found, FALSE if no jobs.
-    Does not handle notifications itself anymore.
+    Scrapes the page for unique Job IDs.
+    Returns a SET of strings, e.g., {'392810', '492102'}
     """
-    # Print current time
-    now = datetime.now().strftime("%I:%M %p")
-    print(f"[{now}] 🚀 Scanning SmartFind...")
-    
-    jobs_found = False # Default to False
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        
+    try:
+        # Get all text from the main body and the frame
+        main_text = page.locator("body").inner_text()
         try:
-            # --- LOGIN ---
-            page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do")
-            
-            frame = page.frames[0]
-            frame.locator("#userId").wait_for(state="visible", timeout=10000)
-            frame.locator("#userId").fill(SF_USERNAME, force=True)
-            frame.locator("#userPin").fill(SF_PASSWORD, force=True)
-            frame.locator("#userPin").press("Enter")
-            
-            page.wait_for_load_state('networkidle')
+            frame_text = page.frames[0].locator("body").inner_text()
+        except:
+            frame_text = ""
+        
+        combined_text = (main_text + "\n" + frame_text)
 
-            # --- CHECK JOBS ---
-            page.locator("#available-tab-link").wait_for(state="visible", timeout=15000)
-            page.locator("#available-tab-link").click()
-            
-            time.sleep(15) # Wait for load
-            
-            # --- ROBUST TEXT CHECK ---
-            main_text = page.locator("body").inner_text().lower()
-            try:
-                frame_text = page.frames[0].locator("body").inner_text().lower()
-            except:
-                frame_text = ""
-            
-            combined_text = main_text + " " + frame_text
-            target_phrase = "no jobs available"
-            
-            if target_phrase in combined_text:
-                print(f"   ✅ Clean scan: No jobs found.")
-                jobs_found = False
-            else:
-                # Double Check
-                if "date" in combined_text or "job" in combined_text or "location" in combined_text:
-                    print("   🚨 JOB DETECTED (Scan Positive)")
-                    jobs_found = True
-                else:
-                    print("   ⚠️ Scan ambiguous. Assuming no jobs.")
-                    jobs_found = False
+        # CHECK 1: Is the list empty?
+        if "no jobs available" in combined_text.lower():
+            return set() # Return empty set
 
-        except Exception as e:
-            print(f"   ❌ Error checking jobs: {e}")
-            # If error, assume False to be safe/avoid spam
-            jobs_found = False
+        # CHECK 2: Extract Job IDs
+        # Looks for patterns like "Job ID: 123456" or "Job 123456"
+        # \d{5,} means "look for 5 or more digits in a row" to avoid finding dates/times
+        found_ids = set(re.findall(r"(?:Job|ID)\D{0,10}(\d{5,})", combined_text, re.IGNORECASE))
+        
+        # Fallback: If we see "Date/Location" but Regex found NO IDs, 
+        # return a dummy ID so we still get an alert.
+        if not found_ids and ("date" in combined_text.lower() or "location" in combined_text.lower()):
+            return {"UNKNOWN_JOB"}
 
-        browser.close()
-        return jobs_found
+        return found_ids
 
-if __name__ == "__main__":
-    print("🤖 Bot is Online. Press Ctrl+C to stop.")
+    except Exception as e:
+        print(f"   ⚠️ Error reading IDs: {e}")
+        return set()
+
+def run_bot():
+    print("🤖 Bot is Online. Tracking unique Job IDs.")
     
-    # --- STARTUP TEST ---
-    print("📲 Sending Startup Test...")
-    send_push("✅ Bot Online: Anti-Spam Mode Active.")
-    # --------------------
+    # MEMORY: Keeps track of jobs we already notified about
+    # We start empty. The first scan will find existing jobs and notify.
+    known_jobs = set()
 
-    # State Variable: Remembers if we already yelled about the current job
-    already_alerted = False
+    # Send startup test
+    send_push("✅ Bot Online: Intelligent Job Tracking Active.")
 
     while True:
-        # Run the check and get the result (True/False)
-        has_jobs = check_for_jobs()
+        now = datetime.now().strftime("%I:%M %p")
+        print(f"[{now}] 🚀 Scanning SmartFind...")
 
-        if has_jobs:
-            if already_alerted:
-                # We saw this job last time. Stay silent.
-                print("   🤫 Jobs still there. Keeping quiet.")
-            else:
-                # NEW JOB DETECTED! Send the alert.
-                send_push("🚨 JOBS AVAILABLE! Go to SmartFind now!")
-                already_alerted = True # Mark as "Seen"
-        else:
-            # No jobs found. Reset the flag.
-            # Next time a job appears, it will be treated as "New".
-            already_alerted = False
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            
+            try:
+                # --- LOGIN ---
+                page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do")
+                frame = page.frames[0]
+                frame.locator("#userId").wait_for(state="visible", timeout=10000)
+                frame.locator("#userId").fill(SF_USERNAME, force=True)
+                frame.locator("#userPin").fill(SF_PASSWORD, force=True)
+                frame.locator("#userPin").press("Enter")
+                page.wait_for_load_state('networkidle')
 
+                # --- NAVIGATE ---
+                page.locator("#available-tab-link").wait_for(state="visible", timeout=15000)
+                page.locator("#available-tab-link").click()
+                time.sleep(15) # Wait for table to load
+                
+                # --- INTELLIGENT SCAN ---
+                current_jobs = get_active_job_ids(page)
+                
+                if not current_jobs:
+                    print(f"   ✅ Clean scan: No jobs found.")
+                    # If list is empty, clear memory so we can re-alert if they come back later
+                    known_jobs.clear()
+                
+                else:
+                    # LOGIC: Find jobs that are in 'current' but NOT in 'known'
+                    new_jobs = current_jobs - known_jobs
+                    
+                    if new_jobs:
+                        print(f"   🚨 NEW JOBS DETECTED: {new_jobs}")
+                        
+                        if "UNKNOWN_JOB" in new_jobs:
+                            msg = "🚨 JOBS AVAILABLE! (ID not read, check site!)"
+                        else:
+                            # Create a nice message like: "New Jobs: #12345, #67890"
+                            ids_str = ", #".join(new_jobs)
+                            msg = f"🚨 {len(new_jobs)} NEW JOBS: #{ids_str}"
+                        
+                        send_push(msg)
+                        
+                        # Add these new jobs to our memory
+                        known_jobs.update(new_jobs)
+                    else:
+                        print(f"   🤫 Jobs present ({current_jobs}), but already notified.")
+
+            except Exception as e:
+                print(f"   ❌ Error during scan: {e}")
+
+            browser.close()
+        
         print("   ⏳ Sleeping for 60 seconds...\n")
         time.sleep(60)
+
+if __name__ == "__main__":
+    run_bot()
