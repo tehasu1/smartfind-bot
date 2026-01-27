@@ -26,102 +26,102 @@ def send_push(message):
         })
         conn.request("POST", "/1/messages.json", payload, {"Content-type": "application/x-www-form-urlencoded"})
         conn.getresponse()
-    except Exception as e:
-        print(f"❌ Push failed: {e}")
-
-def get_active_job_ids(page):
-    try:
-        # Give the JS extra time to render the table
-        time.sleep(10)
-        
-        # Pull text from everywhere
-        main_text = page.locator("body").inner_text()
-        frame_text = ""
-        try:
-            # SmartFind often uses frames; this targets the first child frame safely
-            if len(page.frames) > 1:
-                frame_text = page.frames[1].locator("body").inner_text()
-        except:
-            pass
-            
-        combined = (main_text + " " + frame_text).lower()
-        
-        if "no jobs available" in combined:
-            return set()
-
-        # Look for 6+ digit numbers (Job IDs)
-        found_ids = set(re.findall(r"\b\d{6,10}\b", combined))
-        # Filter out the year
-        found_ids.discard("2026")
-        return found_ids
-    except Exception as e:
-        print(f"   ⚠️ Scrape Error: {e}")
-        return set()
+    except:
+        pass
 
 def run_check(known_jobs):
     now = datetime.now().strftime("%I:%M %p")
     print(f"[{now}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
-        # --- THE FIX: LIGHTWEIGHT LAUNCH ---
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--no-zygote",
-                "--single-process" # Reduces memory footprint significantly
-            ]
-        )
-        # ----------------------------------
-        
-        context = browser.new_context()
-        # Set a long timeout so it doesn't give up too fast
-        context.set_default_timeout(60000) 
+        # Launch with heavy anti-crash arguments
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--single-process"])
+        context = browser.new_context(viewport={'width': 1280, 'height': 800})
         page = context.new_page()
         
         try:
-            # Login with a longer wait
-            page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle", timeout=60000)
+            # --- LOGIN ---
+            print("   ...Logging in")
+            page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
-            frame = page.frames[0]
-            frame.locator("#userId").wait_for(state="visible")
-            frame.locator("#userId").fill(SF_USERNAME)
-            frame.locator("#userPin").fill(SF_PASSWORD)
-            frame.locator("#userPin").press("Enter")
+            # Handle Login Frame
+            if page.frames:
+                frame = page.frames[0]
+                try:
+                    frame.locator("#userId").fill(SF_USERNAME)
+                    frame.locator("#userPin").fill(SF_PASSWORD)
+                    frame.locator("#userPin").press("Enter")
+                except:
+                    # Sometimes the login is on the main page, not a frame
+                    page.locator("#userId").fill(SF_USERNAME)
+                    page.locator("#userPin").fill(SF_PASSWORD)
+                    page.locator("#userPin").press("Enter")
             
-            page.wait_for_load_state('networkidle')
+            page.wait_for_load_state("networkidle")
 
-            # Navigate to Jobs
-            page.locator("#available-tab-link").wait_for(state="visible")
-            page.locator("#available-tab-link").click()
+            # --- CLICK 'AVAILABLE JOBS' ---
+            print("   ...Navigating to Jobs Tab")
+            # We force a click on the tab.
+            # Note: We use a broad selector that finds the link by text "Available" if ID fails
+            try:
+                page.locator("#available-tab-link").click(timeout=5000)
+            except:
+                # Fallback: Try clicking by text
+                page.get_by_text("Available Jobs").click()
+                
+            # Wait for the table to appear
+            time.sleep(10)
+
+            # --- DEBUG: WHAT DO WE SEE? ---
+            # Grab text from ALL frames
+            combined_text = page.locator("body").inner_text()
+            for frame in page.frames:
+                try:
+                    combined_text += " " + frame.locator("body").inner_text()
+                except:
+                    pass
             
-            current_ids = get_active_job_ids(page)
+            combined_text = combined_text.lower()
             
+            # *** PRINT THE EVIDENCE ***
+            # This will show up in Railway logs so we know if we are on the right page
+            print(f"   🔎 PAGE PREVIEW: {combined_text[:200]}...") 
+            
+            # --- FIND JOBS ---
+            if "no jobs available" in combined_text:
+                print("   ✅ Site explicitly says: 'No jobs available'")
+                current_ids = set()
+            else:
+                # Broadest search possible: Any 6-10 digit number
+                current_ids = set(re.findall(r"\b\d{6,10}\b", combined_text))
+                current_ids.discard("2025")
+                current_ids.discard("2026")
+                
+                # Filter out the user's own phone number/ID if it appears
+                current_ids.discard(SF_USERNAME) 
+
+            # --- NOTIFICATIONS ---
             if not current_ids:
-                print("   ✅ Clean scan.")
+                print(f"   ✅ Clean scan. (Found 0 IDs)")
                 known_jobs.clear()
             else:
                 new_jobs = current_ids - known_jobs
                 if new_jobs:
-                    print(f"   🚨 NEW JOBS: {new_jobs}")
-                    send_push(f"🚨 {len(new_jobs)} NEW JOBS: #{', #'.join(new_jobs)}")
+                    print(f"   🚨 NEW JOBS FOUND: {new_jobs}")
+                    send_push(f"🚨 FOUND {len(new_jobs)} JOBS: {', '.join(new_jobs)}")
                     known_jobs.update(new_jobs)
                 else:
-                    print(f"   🤫 Jobs present, already notified.")
-                    
+                    print(f"   🤫 Jobs present ({len(current_ids)}), already notified.")
+
         except Exception as e:
-            print(f"   ❌ Error during scan: {e}")
+            print(f"   ❌ Error: {e}")
         finally:
-            # ALWAYS close browser to free up RAM
             browser.close()
 
 if __name__ == "__main__":
-    print("🤖 Bot Online. Low-Memory Mode Active.")
     known_jobs = set()
+    print("🤖 Bot Active. DEBUG MODE.")
+    send_push("Bot Restarted: Debug Mode")
     while True:
         run_check(known_jobs)
-        print("   ⏳ Sleeping 60s...\n")
         time.sleep(60)
