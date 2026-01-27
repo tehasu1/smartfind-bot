@@ -57,41 +57,17 @@ def run_check(known_jobs):
                     except: continue
 
             page.wait_for_load_state("networkidle")
-            time.sleep(8) 
+            time.sleep(5) 
 
-            # --- GOD MODE NAVIGATION ---
-            print("   ...Injecting JavaScript Click")
+            # --- DIRECT URL JUMP (The Fail-Safe) ---
+            print("   ...Forcing URL Jump to Job Search")
             
-            navigated = False
+            # This is the specific URL for the "Search" page on SmartFind
+            # We go there directly, bypassing the need to click anything.
+            page.goto("https://westcontracosta.eschoolsolutions.com/searchJobsAction.do", wait_until="networkidle")
             
-            # STRATEGY: Execute raw JavaScript inside every frame
-            # This bypasses "visibility" checks and forces the event.
-            for frame in page.frames + [page]:
-                if navigated: break
-                try:
-                    # 1. Try to click the ID '#available-tab-link' using internal JS
-                    # This is much stronger than page.click()
-                    frame.evaluate("document.getElementById('available-tab-link').click()")
-                    print("   👉 JS Injection: Triggered '#available-tab-link'")
-                    navigated = True
-                except:
-                    # 2. Try to find the link by text content via JS (XPath equivalent)
-                    try:
-                        frame.evaluate("""
-                            const links = document.querySelectorAll('a');
-                            for (let link of links) {
-                                if (link.innerText.includes('Available Jobs')) {
-                                    link.click();
-                                    break;
-                                }
-                            }
-                        """)
-                        print("   👉 JS Injection: Triggered Text Match 'Available Jobs'")
-                        navigated = True
-                    except: continue
-
-            # Wait to see if the page reacted
-            time.sleep(10)
+            # Wait for table
+            time.sleep(8)
 
             # --- VERIFY ---
             combined_text = ""
@@ -99,10 +75,11 @@ def run_check(known_jobs):
                 try: combined_text += " " + frame.locator("body").inner_text()
                 except: pass
             
+            # Check if we are still on the profile page
             if "dates on your profile" in combined_text.lower():
-                print("   ❌ STUCK on Profile. JS Click failed.")
+                print("   ❌ STUCK: URL Jump failed (Redirected back to profile).")
             else:
-                print("   ✅ SUCCESS: Profile text gone. We are on the Jobs List.")
+                print("   ✅ SUCCESS: We are on a new page (Profile text gone).")
 
             # --- SCAN ---
             # Look for 6 digit numbers
@@ -131,7 +108,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. JS Injection Mode.")
+    print("🤖 Bot Active. Direct URL Mode.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
