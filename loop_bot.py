@@ -29,17 +29,58 @@ def send_push(message):
     except:
         pass
 
-def clean_text(text):
+def parse_row_to_clean_string(row_element):
     """
-    Takes messy text with newlines and double spaces and flattens it.
-    Example: "Teacher   \n   \n  Math" -> "Teacher | Math"
+    Extracts meaningful data from a row and formats it nicely.
+    Returns None if the row is invalid/hidden.
     """
-    if not text: return ""
-    # Replace newlines with a pipe separator for readability
-    text = text.replace("\n", " | ")
-    # Collapse multiple spaces into one
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+    # 1. VISIBILITY CHECK: Ignore hidden mobile-view rows
+    if not row_element.is_visible():
+        return None
+
+    # Get all text pieces split by newline
+    text_list = row_element.inner_text().split('\n')
+    
+    # Clean up whitespace and remove empty strings
+    clean_items = [item.strip() for item in text_list if item.strip()]
+    
+    # Filter out common junk words
+    clean_items = [x for x in clean_items if x not in ["Decline", "Accept", "Details", "Select"]]
+
+    if not clean_items:
+        return None
+
+    # 2. DATA EXTRACTION
+    # We try to identify parts based on your screenshot structure:
+    # [Day, Date, Time, Name, Classification, Location]
+    
+    # Join everything first to search for patterns
+    full_string = " ".join(clean_items)
+    
+    # If no numbers (dates/times) are present, it's not a job row
+    if not re.search(r'\d', full_string):
+        return None
+
+    # Attempt to format nicely
+    # We look for the date (MM/DD/YYYY)
+    date_match = re.search(r'\d{2}/\d{2}/\d{4}', full_string)
+    date_str = date_match.group(0) if date_match else "Unknown Date"
+
+    # We try to create a readable summary
+    # We remove the day/date from the list to avoid repetition, then join the rest
+    # This is a heuristic; it formats: "Date | Rest of Info"
+    formatted_msg = f"📅 {date_str}"
+    
+    # Add the rest of the info (Location, Class, etc.)
+    # We skip the first few items if they look like dates/days to reduce clutter
+    content_items = [x for x in clean_items if not re.search(r'\d{2}/\d{2}/\d{4}', x) and x not in ["Wednesday", "Thursday", "Friday", "Monday", "Tuesday"]]
+    
+    if content_items:
+        formatted_msg += f" | {content_items[-1]}" # Location is usually last
+        if len(content_items) > 1:
+            formatted_msg += f" | {content_items[0]}" # Classification is usually first/middle
+
+    return formatted_msg
 
 def run_check(known_jobs):
     now = datetime.now().strftime("%I:%M %p")
@@ -76,61 +117,44 @@ def run_check(known_jobs):
             page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/available", wait_until="networkidle")
             time.sleep(8)
 
-            # --- 3. INTELLIGENT SCAN ---
-            # Check for "No Jobs" sign
-            body_text = page.locator("body").inner_text().lower()
-            if "there are no jobs available" in body_text:
+            # --- 3. CHECK FOR NO JOBS ---
+            if "there are no jobs available" in page.locator("body").inner_text().lower():
                 print("   ✅ Clean scan (No jobs visible).")
-                known_jobs.clear() 
+                known_jobs.clear()
                 return
 
-            # --- 4. ROW ANALYSIS ---
-            print("   👀 Jobs detected. Cleaning data...")
+            # --- 4. SMART ROW PARSING ---
+            print("   👀 Jobs detected. Parsing rows...")
             
-            current_scan_signatures = set()
             new_jobs_found = []
+            current_scan_signatures = set()
 
-            # Grab all table rows
             rows = page.locator("tr").all()
             
             for row in rows:
-                raw_text = row.inner_text()
-                cleaned = clean_text(raw_text)
+                # Use our new smart parser
+                clean_msg = parse_row_to_clean_string(row)
                 
-                # --- FILTER TRASH ---
-                # 1. Skip empty rows
-                if len(cleaned) < 10: continue
-                # 2. Skip Headers (Rows that contain "Date" and "Location" usually are headers)
-                if "Date" in cleaned and "Location" in cleaned: continue
-                # 3. Skip rows that don't have a number (Jobs ALWAYS have a date like 01/27 or a time like 8:00)
-                if not re.search(r'\d', cleaned): continue
-                
-                # --- SAVE ---
-                # Use the first 60 chars as the unique fingerprint
-                fingerprint = cleaned[:60]
-                current_scan_signatures.add(fingerprint)
+                if clean_msg:
+                    # Create a simple signature to track duplicates
+                    # We just use the full string as the ID
+                    fingerprint = clean_msg
+                    current_scan_signatures.add(fingerprint)
 
-                if fingerprint not in known_jobs:
-                    print(f"   🚨 NEW LISTING: {cleaned[:40]}...")
-                    new_jobs_found.append(cleaned)
+                    if fingerprint not in known_jobs:
+                        print(f"   🚨 NEW LISTING: {clean_msg}")
+                        new_jobs_found.append(clean_msg)
 
-            # --- NOTIFY ---
+            # --- 5. NOTIFY ---
             if new_jobs_found:
-                # Limit to 3 jobs per push so it doesn't get cut off
-                display_jobs = new_jobs_found[:3]
+                msg = f"🚨 {len(new_jobs_found)} NEW JOB(S):\n"
+                for job in new_jobs_found:
+                    msg += f"{job}\n"
                 
-                msg = f"🚨 {len(new_jobs_found)} NEW LISTING(S):\n"
-                for job in display_jobs:
-                    # formatting: Cut off at 100 chars to keep it readable
-                    msg += f"🔹 {job[:100]}...\n"
-                
-                if len(new_jobs_found) > 3:
-                    msg += f"plus {len(new_jobs_found)-3} more..."
-
                 send_push(msg)
                 known_jobs.update(current_scan_signatures)
             else:
-                print(f"   🤫 Jobs present, but no new unique rows found.")
+                print(f"   🤫 Jobs present, but already notified.")
 
         except Exception as e:
             print(f"   ❌ Error: {e}")
@@ -139,7 +163,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. Clean Format Mode.")
+    print("🤖 Bot Active. Smart-Parse Mode.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
