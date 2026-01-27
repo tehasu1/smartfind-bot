@@ -48,7 +48,6 @@ def run_check(known_jobs):
                 page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
                 page.locator("#userPin").press("Enter")
             except:
-                # Frame Fallback
                 for frame in page.frames:
                     try:
                         frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
@@ -58,60 +57,57 @@ def run_check(known_jobs):
                     except: continue
 
             page.wait_for_load_state("networkidle")
-            time.sleep(5) 
+            time.sleep(8) 
 
-            # --- NAVIGATION (SNIPER CLICK) ---
-            print("   ...Clicking 'Available Jobs'")
+            # --- GOD MODE NAVIGATION ---
+            print("   ...Injecting JavaScript Click")
             
-            # Function to check if we are still on profile page
-            def is_on_profile():
-                txt = ""
-                for f in page.frames + [page]:
-                    try: txt += f.locator("body").inner_text().lower()
-                    except: pass
-                return "dates on your profile" in txt
-
-            # ATTEMPT 1: Text Match (Most Reliable)
-            clicked = False
+            navigated = False
+            
+            # STRATEGY: Execute raw JavaScript inside every frame
+            # This bypasses "visibility" checks and forces the event.
             for frame in page.frames + [page]:
-                if clicked: break
+                if navigated: break
                 try:
-                    # We look for the text strictly, ignoring whitespace
-                    frame.get_by_text("Available Jobs", exact=False).click(force=True, timeout=2000)
-                    print("   👉 Clicked text 'Available Jobs'")
-                    clicked = True
-                except: continue
-            
-            # Wait a moment to see if it worked
-            time.sleep(5)
-            
-            # ATTEMPT 2: Double Tap (If still on profile)
-            if is_on_profile():
-                print("   ⚠️ Still on profile. RETRYING click...")
-                for frame in page.frames + [page]:
+                    # 1. Try to click the ID '#available-tab-link' using internal JS
+                    # This is much stronger than page.click()
+                    frame.evaluate("document.getElementById('available-tab-link').click()")
+                    print("   👉 JS Injection: Triggered '#available-tab-link'")
+                    navigated = True
+                except:
+                    # 2. Try to find the link by text content via JS (XPath equivalent)
                     try:
-                        # Try the ID this time as backup
-                        frame.locator("#available-tab-link").click(force=True, timeout=2000)
-                        print("   👉 Clicked ID '#available-tab-link'")
+                        frame.evaluate("""
+                            const links = document.querySelectorAll('a');
+                            for (let link of links) {
+                                if (link.innerText.includes('Available Jobs')) {
+                                    link.click();
+                                    break;
+                                }
+                            }
+                        """)
+                        print("   👉 JS Injection: Triggered Text Match 'Available Jobs'")
+                        navigated = True
                     except: continue
-                time.sleep(5)
 
-            # --- FINAL CHECK ---
-            if is_on_profile():
-                print("   ❌ CRITICAL: Stuck on Profile Page. Bot cannot see jobs.")
-            else:
-                print("   ✅ Navigation Verified (Profile text gone).")
+            # Wait to see if the page reacted
+            time.sleep(10)
 
-            # --- SCANNING ---
+            # --- VERIFY ---
             combined_text = ""
             for frame in page.frames + [page]:
                 try: combined_text += " " + frame.locator("body").inner_text()
                 except: pass
             
-            # Find 6-digit numbers
+            if "dates on your profile" in combined_text.lower():
+                print("   ❌ STUCK on Profile. JS Click failed.")
+            else:
+                print("   ✅ SUCCESS: Profile text gone. We are on the Jobs List.")
+
+            # --- SCAN ---
+            # Look for 6 digit numbers
             current_ids = set(re.findall(r"\b(\d{6})\b", combined_text))
             
-            # Clean up
             for bad in ["2025", "2026", "1920", "1080", SF_USERNAME]:
                 current_ids.discard(bad)
 
@@ -135,7 +131,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. Sniper Click Mode.")
+    print("🤖 Bot Active. JS Injection Mode.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
