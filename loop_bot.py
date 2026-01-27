@@ -1,6 +1,5 @@
 import os
 import time
-import re
 import http.client
 import urllib.parse
 import ssl
@@ -29,9 +28,9 @@ def send_push(message):
     except:
         pass
 
-def run_check(known_jobs):
+def run_check():
     now = datetime.now().strftime("%I:%M %p")
-    print(f"[{now}] 🚀 Scanning SmartFind...")
+    print(f"[{now}] 🚀 Scanning SmartFind (Modern UI)...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--single-process"])
@@ -39,8 +38,9 @@ def run_check(known_jobs):
         page = context.new_page()
         
         try:
-            # --- LOGIN ---
+            # --- 1. LOGIN ---
             print("   ...Logging in")
+            # We still login at the standard portal
             page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
             try:
@@ -48,6 +48,7 @@ def run_check(known_jobs):
                 page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
                 page.locator("#userPin").press("Enter")
             except:
+                # Fallback for frames
                 for frame in page.frames:
                     try:
                         frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
@@ -56,50 +57,44 @@ def run_check(known_jobs):
                         break
                     except: continue
 
+            # Wait for login to complete
             page.wait_for_load_state("networkidle")
             time.sleep(5) 
 
-            # --- DIRECT URL JUMP (The Fail-Safe) ---
-            print("   ...Forcing URL Jump to Job Search")
+            # --- 2. GO TO MODERN DASHBOARD ---
+            print("   ...Loading Job Board")
+            # This is the specific URL you provided
+            page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/available", wait_until="networkidle")
             
-            # This is the specific URL for the "Search" page on SmartFind
-            # We go there directly, bypassing the need to click anything.
-            page.goto("https://westcontracosta.eschoolsolutions.com/searchJobsAction.do", wait_until="networkidle")
-            
-            # Wait for table
+            # SPAs (Single Page Apps) take a moment to "build" the page after loading
             time.sleep(8)
 
-            # --- VERIFY ---
-            combined_text = ""
-            for frame in page.frames + [page]:
-                try: combined_text += " " + frame.locator("body").inner_text()
-                except: pass
+            # --- 3. CHECK FOR THE "NO JOBS" SIGN ---
+            combined_text = page.locator("body").inner_text().lower()
             
-            # Check if we are still on the profile page
-            if "dates on your profile" in combined_text.lower():
-                print("   ❌ STUCK: URL Jump failed (Redirected back to profile).")
-            else:
-                print("   ✅ SUCCESS: We are on a new page (Profile text gone).")
-
-            # --- SCAN ---
-            # Look for 6 digit numbers
-            current_ids = set(re.findall(r"\b(\d{6})\b", combined_text))
+            # The specific phrase from your screenshot
+            no_jobs_marker = "there are no jobs available"
             
-            for bad in ["2025", "2026", "1920", "1080", SF_USERNAME]:
-                current_ids.discard(bad)
+            if "dates on your profile" in combined_text and "job search" not in combined_text:
+                 print("   ❌ STUCK: Login might have failed or redirected to profile.")
+                 return
 
-            if not current_ids:
-                print("   ✅ Clean scan.")
-                known_jobs.clear()
+            if no_jobs_marker in combined_text:
+                print("   ✅ Clean scan (Found 'No jobs' message).")
             else:
-                new_jobs = current_ids - known_jobs
-                if new_jobs:
-                    print(f"   🚨 NEW JOBS: {new_jobs}")
-                    formatted_ids = [f"#{jid}" for jid in new_jobs]
-                    send_push(f"🚨 {len(new_jobs)} JOBS FOUND: {', '.join(formatted_ids)}")
-                    known_jobs.update(new_jobs)
-                else:
-                    print(f"   🤫 Jobs present ({len(current_ids)}), already notified.")
+                # IF THE MESSAGE IS GONE, SEND ALERT
+                print("   🚨 ALERT: The 'No Jobs' message is missing!")
+                
+                # Try to grab a snippet of text for the notification
+                # In the modern UI, job cards usually have a 'Date' or 'Location' label
+                preview = "Check SmartFind immediately!"
+                try:
+                    # Look for the first bold text or list item
+                    preview = page.locator(".job-list-item").first.inner_text().replace("\n", " ")[:100]
+                except:
+                    pass
+
+                send_push(f"🚨 JOB DETECTED: {preview}")
 
         except Exception as e:
             print(f"   ❌ Error: {e}")
@@ -107,8 +102,7 @@ def run_check(known_jobs):
             browser.close()
 
 if __name__ == "__main__":
-    known_jobs = set()
-    print("🤖 Bot Active. Direct URL Mode.")
+    print("🤖 Bot Active. Modern UI Mode.")
     while True:
-        run_check(known_jobs)
+        run_check()
         time.sleep(60)
