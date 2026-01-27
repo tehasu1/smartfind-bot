@@ -28,9 +28,9 @@ def send_push(message):
     except:
         pass
 
-def run_check():
+def run_check(known_jobs):
     now = datetime.now().strftime("%I:%M %p")
-    print(f"[{now}] 🚀 Scanning SmartFind (Modern UI)...")
+    print(f"[{now}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--single-process"])
@@ -40,7 +40,6 @@ def run_check():
         try:
             # --- 1. LOGIN ---
             print("   ...Logging in")
-            # We still login at the standard portal
             page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
             try:
@@ -48,7 +47,6 @@ def run_check():
                 page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
                 page.locator("#userPin").press("Enter")
             except:
-                # Fallback for frames
                 for frame in page.frames:
                     try:
                         frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
@@ -57,44 +55,61 @@ def run_check():
                         break
                     except: continue
 
-            # Wait for login to complete
             page.wait_for_load_state("networkidle")
             time.sleep(5) 
 
-            # --- 2. GO TO MODERN DASHBOARD ---
-            print("   ...Loading Job Board")
-            # This is the specific URL you provided
+            # --- 2. GO TO JOB BOARD ---
+            print("   ...Checking Job List")
             page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/available", wait_until="networkidle")
-            
-            # SPAs (Single Page Apps) take a moment to "build" the page after loading
             time.sleep(8)
 
-            # --- 3. CHECK FOR THE "NO JOBS" SIGN ---
-            combined_text = page.locator("body").inner_text().lower()
-            
-            # The specific phrase from your screenshot
-            no_jobs_marker = "there are no jobs available"
-            
-            if "dates on your profile" in combined_text and "job search" not in combined_text:
-                 print("   ❌ STUCK: Login might have failed or redirected to profile.")
-                 return
+            # --- 3. INTELLIGENT SCAN ---
+            # Check if the "No Jobs" message exists
+            body_text = page.locator("body").inner_text().lower()
+            if "there are no jobs available" in body_text:
+                print("   ✅ Clean scan (No jobs visible).")
+                known_jobs.clear() # Clear memory so we re-notify if a job leaves and comes back
+                return
 
-            if no_jobs_marker in combined_text:
-                print("   ✅ Clean scan (Found 'No jobs' message).")
-            else:
-                # IF THE MESSAGE IS GONE, SEND ALERT
-                print("   🚨 ALERT: The 'No Jobs' message is missing!")
+            # IF WE ARE HERE, JOBS EXIST.
+            # We need to find the rows to avoid duplicate alerts.
+            print("   👀 Jobs detected. Analyzing rows...")
+            
+            current_scan_signatures = set()
+            new_jobs_found = []
+
+            # Grab all table rows (tr)
+            rows = page.locator("tr").all()
+            
+            for row in rows:
+                text = row.inner_text().strip()
+                # Skip headers and empty rows
+                if not text or "Date" in text or "Classification" in text:
+                    continue
                 
-                # Try to grab a snippet of text for the notification
-                # In the modern UI, job cards usually have a 'Date' or 'Location' label
-                preview = "Check SmartFind immediately!"
-                try:
-                    # Look for the first bold text or list item
-                    preview = page.locator(".job-list-item").first.inner_text().replace("\n", " ")[:100]
-                except:
-                    pass
+                # Create a "Fingerprint" (The unique text of this job)
+                # We use the first 50 chars which usually contains Date/Time/Location
+                fingerprint = text[:50]
+                current_scan_signatures.add(fingerprint)
 
-                send_push(f"🚨 JOB DETECTED: {preview}")
+                # Check if we already know this job
+                if fingerprint not in known_jobs:
+                    print(f"   🚨 NEW LISTING: {text[:40]}...")
+                    new_jobs_found.append(text)
+            
+            # Update our memory
+            # We add the new ones to known_jobs
+            # We DO NOT clear known_jobs here, so we remember them next loop
+            if new_jobs_found:
+                # Create a nice message for the push notification
+                msg = f"🚨 {len(new_jobs_found)} NEW JOB(S)!\n"
+                for job in new_jobs_found:
+                    msg += f"- {job[:100]}...\n" # First 100 chars of details
+                
+                send_push(msg)
+                known_jobs.update(current_scan_signatures)
+            else:
+                print(f"   🤫 Jobs are present, but we already notified you about them.")
 
         except Exception as e:
             print(f"   ❌ Error: {e}")
@@ -102,7 +117,9 @@ def run_check():
             browser.close()
 
 if __name__ == "__main__":
-    print("🤖 Bot Active. Modern UI Mode.")
+    # This set lives in memory and remembers jobs between scans
+    known_jobs = set()
+    print("🤖 Bot Active. Duplicate Protection Enabled.")
     while True:
-        run_check()
+        run_check(known_jobs)
         time.sleep(60)
