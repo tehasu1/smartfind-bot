@@ -29,123 +29,81 @@ def send_push(message):
     except:
         pass
 
-def attempt_login(page):
-    print("   ...Logging in")
-    page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
-    
-    # Try main page login first
-    try:
-        page.locator("#userId").fill(SF_USERNAME, timeout=2000)
-        page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
-        page.locator("#userPin").press("Enter")
-        return
-    except:
-        pass
-
-    # Try searching frames for login
-    for frame in page.frames:
-        try:
-            frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
-            frame.locator("#userPin").fill(SF_PASSWORD, timeout=1000)
-            frame.locator("#userPin").press("Enter")
-            return
-        except:
-            continue
-
-def navigate_to_jobs(page):
-    print("   ...Hunting for Job Link")
-    # Give the dashboard a moment to render
-    page.wait_for_timeout(5000)
-    
-    clicked = False
-    
-    # METHOD 1: Look for the ID '#available-tab-link' in ALL FRAMES
-    # This is the most reliable method if we can find it.
-    for frame in page.frames + [page]:
-        if clicked: break
-        try:
-            # We use force=True to bypass "element is hidden" checks
-            link = frame.locator("#available-tab-link")
-            if link.count() > 0:
-                print("   👉 Found ID '#available-tab-link', clicking...")
-                link.click(force=True, timeout=2000)
-                clicked = True
-                break
-        except:
-            continue
-
-    # METHOD 2: Look for text "Job Search" or "Available Jobs"
-    if not clicked:
-        print("   ⚠️ ID not found. Trying text search...")
-        for frame in page.frames + [page]:
-            if clicked: break
-            try:
-                # Try explicit text match
-                frame.get_by_text("Job Search").click(force=True, timeout=1000)
-                print("   👉 Clicked text 'Job Search'")
-                clicked = True
-            except:
-                try:
-                    frame.get_by_text("Available Jobs").click(force=True, timeout=1000)
-                    print("   👉 Clicked text 'Available Jobs'")
-                    clicked = True
-                except:
-                    continue
-    
-    if not clicked:
-        print("   ❌ CRITICAL: Could not find any navigation link.")
-        # DEBUG: Print all links found to see what is actually there
-        print("   🔎 DUMPING ALL LINKS ON PAGE:")
-        links = page.locator("a").all_inner_texts()
-        print(links[:20]) # Show first 20 links
-
 def run_check(known_jobs):
     now = datetime.now().strftime("%I:%M %p")
     print(f"[{now}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--single-process"])
-        # Use Desktop Viewport to prevent "Hamburger Menu" hiding links
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
         
         try:
-            attempt_login(page)
-            page.wait_for_load_state("networkidle")
+            # Login
+            print("   ...Logging in")
+            page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
-            navigate_to_jobs(page)
-            
-            # Wait for table
-            time.sleep(8)
+            # Smart Login (Main page or Frame)
+            try:
+                page.locator("#userId").fill(SF_USERNAME, timeout=2000)
+                page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
+                page.locator("#userPin").press("Enter")
+            except:
+                for frame in page.frames:
+                    try:
+                        frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
+                        frame.locator("#userPin").fill(SF_PASSWORD, timeout=1000)
+                        frame.locator("#userPin").press("Enter")
+                        break
+                    except: continue
 
-            # --- PREVIEW & SCAN ---
+            # Navigate
+            print("   ...Hunting for Job Link")
+            page.wait_for_timeout(5000)
+            
+            # Click logic (Search & Destroy)
+            clicked = False
+            for frame in page.frames + [page]:
+                if clicked: break
+                try:
+                    # Look for ID first
+                    frame.locator("#available-tab-link").click(force=True, timeout=2000)
+                    clicked = True
+                except:
+                    # Look for text "Search"
+                    try: 
+                        frame.get_by_text("Job Search").click(force=True, timeout=1000)
+                        clicked = True
+                    except: continue
+            
+            if not clicked:
+                print("   ⚠️ Navigation warning: Could not verify click.")
+
+            time.sleep(10) # Wait for table
+
+            # SCAN
             combined_text = ""
             for frame in page.frames + [page]:
-                try: combined_text += " " + frame.locator("body").inner_text().lower()
+                try: combined_text += " " + frame.locator("body").inner_text()
                 except: pass
 
-            # DEBUG: Did we make it?
-            if "job search" in combined_text or "available jobs" in combined_text:
-                print("   ✅ Navigation seems successful.")
-            else:
-                print(f"   🔎 Current View: {combined_text[:100]}...")
-
-            # Regex Scan
-            current_ids = set(re.findall(r"\b\d{6,10}\b", combined_text))
-            for bad in ["2025", "2026", SF_USERNAME, "0423", "1080", "1920"]:
-                current_ids.discard(bad)
-
+            # --- PRECISION REGEX ---
+            # Looks for a '#' followed by exactly 6 digits
+            # Captures just the digits
+            current_ids = set(re.findall(r"#(\d{6})", combined_text))
+            
             if not current_ids:
-                print("   ✅ Clean scan.")
+                print("   ✅ Clean scan (No #IDs found).")
                 known_jobs.clear()
             else:
                 new_jobs = current_ids - known_jobs
                 if new_jobs:
                     print(f"   🚨 NEW JOBS: {new_jobs}")
-                    send_push(f"🚨 {len(new_jobs)} NEW JOBS: #{', #'.join(new_jobs)}")
+                    # Send alert
+                    send_push(f"🚨 {len(new_jobs)} JOBS FOUND: #{', #'.join(new_jobs)}")
                     known_jobs.update(new_jobs)
                 else:
-                    print(f"   🤫 Jobs present, already notified.")
+                    print(f"   🤫 Jobs present ({len(current_ids)}), already notified.")
 
         except Exception as e:
             print(f"   ❌ Error: {e}")
@@ -154,7 +112,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. 'Search & Destroy' Mode.")
+    print("🤖 Bot Active. Precision Mode.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
