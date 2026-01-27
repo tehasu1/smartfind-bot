@@ -39,11 +39,11 @@ def run_check(known_jobs):
         page = context.new_page()
         
         try:
-            # Login
+            # --- LOGIN ---
             print("   ...Logging in")
             page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
-            # Smart Login (Main page or Frame)
+            # Login Logic (Try main page + frames)
             try:
                 page.locator("#userId").fill(SF_USERNAME, timeout=2000)
                 page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
@@ -57,50 +57,52 @@ def run_check(known_jobs):
                         break
                     except: continue
 
-            # Navigate
+            # --- NAVIGATE ---
             print("   ...Hunting for Job Link")
             page.wait_for_timeout(5000)
             
-            # Click logic (Search & Destroy)
             clicked = False
             for frame in page.frames + [page]:
                 if clicked: break
                 try:
-                    # Look for ID first
                     frame.locator("#available-tab-link").click(force=True, timeout=2000)
                     clicked = True
                 except:
-                    # Look for text "Search"
                     try: 
                         frame.get_by_text("Job Search").click(force=True, timeout=1000)
                         clicked = True
                     except: continue
             
-            if not clicked:
-                print("   ⚠️ Navigation warning: Could not verify click.")
+            time.sleep(10) # Wait for table to load
 
-            time.sleep(10) # Wait for table
-
-            # SCAN
+            # --- EXTRACT TEXT ---
             combined_text = ""
             for frame in page.frames + [page]:
                 try: combined_text += " " + frame.locator("body").inner_text()
                 except: pass
-
-            # --- PRECISION REGEX ---
-            # Looks for a '#' followed by exactly 6 digits
-            # Captures just the digits
-            current_ids = set(re.findall(r"#(\d{6})", combined_text))
             
+            # --- DEBUG: WHAT DOES THE BOT SEE? ---
+            # If we find nothing, this log will tell us if we are on the wrong page
+            print(f"   🔎 RAW TEXT SAMPLE: {combined_text[:100].replace(chr(10), ' ')}...")
+
+            # --- BROAD SEARCH (Removed the '#' requirement) ---
+            # Look for ANY 6-digit number
+            current_ids = set(re.findall(r"\b(\d{6})\b", combined_text))
+            
+            # Filter out junk (Years, User ID, common pixel widths)
+            for bad in ["2025", "2026", "1920", "1080", SF_USERNAME]:
+                current_ids.discard(bad)
+
             if not current_ids:
-                print("   ✅ Clean scan (No #IDs found).")
+                print("   ✅ Clean scan (No 6-digit numbers found).")
                 known_jobs.clear()
             else:
                 new_jobs = current_ids - known_jobs
                 if new_jobs:
                     print(f"   🚨 NEW JOBS: {new_jobs}")
-                    # Send alert
-                    send_push(f"🚨 {len(new_jobs)} JOBS FOUND: #{', #'.join(new_jobs)}")
+                    # We manually add the '#' back for the notification text so it looks nice
+                    formatted_ids = [f"#{jid}" for jid in new_jobs]
+                    send_push(f"🚨 {len(new_jobs)} JOBS FOUND: {', '.join(formatted_ids)}")
                     known_jobs.update(new_jobs)
                 else:
                     print(f"   🤫 Jobs present ({len(current_ids)}), already notified.")
@@ -112,7 +114,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. Precision Mode.")
+    print("🤖 Bot Active. Broad Search Mode.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
