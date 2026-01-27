@@ -34,8 +34,8 @@ def run_check(known_jobs):
     print(f"[{now}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
-        # Launch with heavy anti-crash arguments
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--single-process"])
+        # Launch with options to prevent crashing
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--single-process"])
         context = browser.new_context(viewport={'width': 1280, 'height': 800})
         page = context.new_page()
         
@@ -44,84 +44,83 @@ def run_check(known_jobs):
             print("   ...Logging in")
             page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
-            # Handle Login Frame
-            if page.frames:
-                frame = page.frames[0]
-                try:
+            # Try filling login in main page first, then frame if needed
+            try:
+                page.locator("#userId").fill(SF_USERNAME, timeout=2000)
+                page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
+                page.locator("#userPin").press("Enter")
+            except:
+                if page.frames:
+                    frame = page.frames[0]
                     frame.locator("#userId").fill(SF_USERNAME)
                     frame.locator("#userPin").fill(SF_PASSWORD)
                     frame.locator("#userPin").press("Enter")
-                except:
-                    # Sometimes the login is on the main page, not a frame
-                    page.locator("#userId").fill(SF_USERNAME)
-                    page.locator("#userPin").fill(SF_PASSWORD)
-                    page.locator("#userPin").press("Enter")
             
             page.wait_for_load_state("networkidle")
 
-            # --- CLICK 'AVAILABLE JOBS' ---
-            print("   ...Navigating to Jobs Tab")
-            # We force a click on the tab.
-            # Note: We use a broad selector that finds the link by text "Available" if ID fails
+            # --- SMART NAVIGATION (The Fix) ---
+            print("   ...Looking for Job Link")
+            
+            # Strategy: Click the text "Available Jobs" directly
+            # If that fails, try "Job Search" (which showed up in your logs)
             try:
-                page.locator("#available-tab-link").click(timeout=5000)
+                # Try specific tab first
+                page.get_by_role("link", name="Available Jobs").click(timeout=5000)
+                print("   ✅ Clicked 'Available Jobs' link")
             except:
-                # Fallback: Try clicking by text
-                page.get_by_text("Available Jobs").click()
-                
-            # Wait for the table to appear
+                try:
+                    # Fallback to general search text
+                    page.get_by_text("Job Search").click(timeout=5000)
+                    print("   ✅ Clicked 'Job Search' text")
+                except:
+                    # Last resort: Try the 'Search' button often found in header
+                    page.get_by_role("link", name="Search").first.click(timeout=5000)
+                    print("   ✅ Clicked generic 'Search' link")
+
+            # Wait for the table to actually appear
             time.sleep(10)
 
-            # --- DEBUG: WHAT DO WE SEE? ---
-            # Grab text from ALL frames
-            combined_text = page.locator("body").inner_text()
+            # --- PREVIEW CHECK ---
+            combined_text = page.locator("body").inner_text().lower()
             for frame in page.frames:
-                try:
-                    combined_text += " " + frame.locator("body").inner_text()
-                except:
-                    pass
-            
-            combined_text = combined_text.lower()
-            
-            # *** PRINT THE EVIDENCE ***
-            # This will show up in Railway logs so we know if we are on the right page
-            print(f"   🔎 PAGE PREVIEW: {combined_text[:200]}...") 
-            
-            # --- FIND JOBS ---
-            if "no jobs available" in combined_text:
-                print("   ✅ Site explicitly says: 'No jobs available'")
-                current_ids = set()
-            else:
-                # Broadest search possible: Any 6-10 digit number
-                current_ids = set(re.findall(r"\b\d{6,10}\b", combined_text))
-                current_ids.discard("2025")
-                current_ids.discard("2026")
-                
-                # Filter out the user's own phone number/ID if it appears
-                current_ids.discard(SF_USERNAME) 
+                try: combined_text += " " + frame.locator("body").inner_text().lower()
+                except: pass
 
-            # --- NOTIFICATIONS ---
+            # Print a snippet to verify we are on the right page now
+            print(f"   🔎 NEW PREVIEW: {combined_text[:150]}...")
+
+            # --- FIND IDS ---
+            # Search for 6-10 digit job numbers
+            current_ids = set(re.findall(r"\b\d{6,10}\b", combined_text))
+            
+            # Cleanup common false positives
+            for bad_num in ["2025", "2026", "0423", "1280", "800", SF_USERNAME]:
+                current_ids.discard(bad_num)
+
             if not current_ids:
-                print(f"   ✅ Clean scan. (Found 0 IDs)")
-                known_jobs.clear()
+                # Only trust "Clean Scan" if we see the words "no jobs" or "list"
+                if "no jobs" in combined_text or "list" in combined_text or "search results" in combined_text:
+                    print("   ✅ Verified Empty List.")
+                    known_jobs.clear()
+                else:
+                    print("   ⚠️ Scan ambiguous (Might still be on wrong page).")
             else:
                 new_jobs = current_ids - known_jobs
                 if new_jobs:
-                    print(f"   🚨 NEW JOBS FOUND: {new_jobs}")
+                    print(f"   🚨 NEW JOBS: {new_jobs}")
                     send_push(f"🚨 FOUND {len(new_jobs)} JOBS: {', '.join(new_jobs)}")
                     known_jobs.update(new_jobs)
                 else:
-                    print(f"   🤫 Jobs present ({len(current_ids)}), already notified.")
+                    print(f"   🤫 Jobs present, already notified.")
 
         except Exception as e:
-            print(f"   ❌ Error: {e}")
+            print(f"   ❌ Navigation Error: {e}")
         finally:
             browser.close()
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. DEBUG MODE.")
-    send_push("Bot Restarted: Debug Mode")
+    print("🤖 Bot Active. Navigation Fix Applied.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
