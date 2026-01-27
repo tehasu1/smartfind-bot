@@ -35,6 +35,7 @@ def run_check(known_jobs):
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--single-process"])
+        # Force a large desktop window to ensure the sidebar/menu is visible
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
         
@@ -43,64 +44,103 @@ def run_check(known_jobs):
             print("   ...Logging in")
             page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
-            # Login Logic (Try main page + frames)
+            # Login (Handle main page vs frame)
+            logged_in = False
             try:
                 page.locator("#userId").fill(SF_USERNAME, timeout=2000)
                 page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
                 page.locator("#userPin").press("Enter")
+                logged_in = True
             except:
                 for frame in page.frames:
                     try:
                         frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
                         frame.locator("#userPin").fill(SF_PASSWORD, timeout=1000)
                         frame.locator("#userPin").press("Enter")
+                        logged_in = True
                         break
                     except: continue
 
-            # --- NAVIGATE ---
-            print("   ...Hunting for Job Link")
-            page.wait_for_timeout(5000)
+            page.wait_for_load_state("networkidle")
+            # WAIT EXTRA TIME FOR THE DASHBOARD TO LOAD
+            time.sleep(8) 
+
+            # --- NAVIGATION DIAGNOSTIC ---
+            print("   ...Analyzing Dashboard Links")
             
+            # 1. DUMP LINKS (Debug): What buttons can the bot actually see?
+            all_links = []
+            for frame in page.frames + [page]:
+                try: 
+                    links = frame.locator("a").all_inner_texts()
+                    all_links.extend([l for l in links if l.strip()])
+                except: pass
+            
+            # Print the first 5 links to see if we are on the right track
+            print(f"   🔎 VISIBLE MENU ITEMS: {all_links[:5]}...")
+
+            # --- NAVIGATION ATTEMPT ---
+            print("   ...Attempting to Click 'Available Jobs'")
             clicked = False
+            
+            # Try 1: The ID '#available-tab-link'
             for frame in page.frames + [page]:
                 if clicked: break
                 try:
                     frame.locator("#available-tab-link").click(force=True, timeout=2000)
+                    print("   👉 Clicked ID '#available-tab-link'")
                     clicked = True
-                except:
-                    try: 
-                        frame.get_by_text("Job Search").click(force=True, timeout=1000)
+                except: continue
+            
+            # Try 2: The Text "Available Jobs"
+            if not clicked:
+                for frame in page.frames + [page]:
+                    if clicked: break
+                    try:
+                        frame.get_by_text("Available Jobs").click(force=True, timeout=2000)
+                        print("   👉 Clicked text 'Available Jobs'")
                         clicked = True
                     except: continue
-            
-            time.sleep(10) # Wait for table to load
 
-            # --- EXTRACT TEXT ---
+            # Try 3: The Text "Search" (Fallback)
+            if not clicked:
+                for frame in page.frames + [page]:
+                    if clicked: break
+                    try:
+                        frame.get_by_text("Search").first.click(force=True, timeout=2000)
+                        print("   👉 Clicked text 'Search'")
+                        clicked = True
+                    except: continue
+
+            # WAIT FOR TABLE LOAD
+            time.sleep(10)
+
+            # --- VERIFY & SCAN ---
             combined_text = ""
             for frame in page.frames + [page]:
                 try: combined_text += " " + frame.locator("body").inner_text()
                 except: pass
             
-            # --- DEBUG: WHAT DOES THE BOT SEE? ---
-            # If we find nothing, this log will tell us if we are on the wrong page
-            print(f"   🔎 RAW TEXT SAMPLE: {combined_text[:100].replace(chr(10), ' ')}...")
+            # Check if we are still on the profile page
+            if "dates on your profile" in combined_text.lower():
+                print("   ❌ STUCK: Still on Profile Page. Navigation failed.")
+            else:
+                print("   ✅ Navigation Successful (Profile text gone).")
 
-            # --- BROAD SEARCH (Removed the '#' requirement) ---
-            # Look for ANY 6-digit number
+            # FIND JOBS (6-digits)
             current_ids = set(re.findall(r"\b(\d{6})\b", combined_text))
             
-            # Filter out junk (Years, User ID, common pixel widths)
+            # Clean up junk
             for bad in ["2025", "2026", "1920", "1080", SF_USERNAME]:
                 current_ids.discard(bad)
 
             if not current_ids:
-                print("   ✅ Clean scan (No 6-digit numbers found).")
+                print("   ✅ Clean scan.")
                 known_jobs.clear()
             else:
                 new_jobs = current_ids - known_jobs
                 if new_jobs:
                     print(f"   🚨 NEW JOBS: {new_jobs}")
-                    # We manually add the '#' back for the notification text so it looks nice
                     formatted_ids = [f"#{jid}" for jid in new_jobs]
                     send_push(f"🚨 {len(new_jobs)} JOBS FOUND: {', '.join(formatted_ids)}")
                     known_jobs.update(new_jobs)
@@ -114,7 +154,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. Broad Search Mode.")
+    print("🤖 Bot Active. Navigation Diagnostics Mode.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
