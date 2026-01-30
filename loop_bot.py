@@ -29,58 +29,78 @@ def send_push(message):
     except:
         pass
 
+def get_active_dates(page):
+    """
+    Scrapes the 'Active Jobs' page to find dates the user is already working.
+    Returns a set of date strings (e.g., {'01/30/2026', '02/04/2026'}).
+    """
+    print("   ...Checking Schedule for conflicts")
+    blocked_dates = set()
+    
+    try:
+        # Go to the Active Jobs URL provided
+        page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/active", wait_until="networkidle")
+        time.sleep(5) # Wait for table to load
+
+        rows = page.locator("tr").all()
+        for row in rows:
+            if not row.is_visible(): continue
+            text = row.inner_text()
+            
+            # Extract date (MM/DD/YYYY)
+            date_match = re.search(r'\d{2}/\d{2}/\d{4}', text)
+            if date_match:
+                blocked_dates.add(date_match.group(0))
+                
+    except Exception as e:
+        print(f"   ⚠️ Could not load schedule: {e}")
+        
+    return blocked_dates
+
 def parse_row_to_clean_string(row_element):
     """
     Extracts meaningful data from a row and formats it nicely.
-    Returns None if the row is invalid/hidden.
+    Returns (formatted_string, raw_date_string) or (None, None).
     """
-    # 1. VISIBILITY CHECK: Ignore hidden mobile-view rows
-    if not row_element.is_visible():
-        return None
+    if not row_element.is_visible(): return None, None
 
-    # Get all text pieces split by newline
     text_list = row_element.inner_text().split('\n')
-    
-    # Clean up whitespace and remove empty strings
     clean_items = [item.strip() for item in text_list if item.strip()]
-    
-    # Filter out common junk words
     clean_items = [x for x in clean_items if x not in ["Decline", "Accept", "Details", "Select"]]
 
-    if not clean_items:
-        return None
+    if not clean_items: return None, None
 
-    # 2. DATA EXTRACTION
-    # We try to identify parts based on your screenshot structure:
-    # [Day, Date, Time, Name, Classification, Location]
-    
-    # Join everything first to search for patterns
     full_string = " ".join(clean_items)
-    
-    # If no numbers (dates/times) are present, it's not a job row
-    if not re.search(r'\d', full_string):
-        return None
+    if not re.search(r'\d', full_string): return None, None
 
-    # Attempt to format nicely
-    # We look for the date (MM/DD/YYYY)
+    # A. Find Date
     date_match = re.search(r'\d{2}/\d{2}/\d{4}', full_string)
-    date_str = date_match.group(0) if date_match else "Unknown Date"
+    date_str = date_match.group(0) if date_match else "Unknown"
 
-    # We try to create a readable summary
-    # We remove the day/date from the list to avoid repetition, then join the rest
-    # This is a heuristic; it formats: "Date | Rest of Info"
+    # B. Find Times
+    time_matches = re.findall(r'\d{1,2}:\d{2}\s?[AP]M', full_string)
+    time_display = ""
+    if len(time_matches) >= 2:
+        time_display = f"{time_matches[0]} - {time_matches[1]}"
+    elif len(time_matches) == 1:
+        time_display = time_matches[0]
+
+    # C. Find Location/Subject
+    content_items = []
+    for x in clean_items:
+        if date_str in x: continue
+        if x in time_matches: continue
+        if x in ["Wednesday", "Thursday", "Friday", "Monday", "Tuesday", "Saturday", "Sunday"]: continue
+        content_items.append(x)
+
+    # D. Format
     formatted_msg = f"📅 {date_str}"
-    
-    # Add the rest of the info (Location, Class, etc.)
-    # We skip the first few items if they look like dates/days to reduce clutter
-    content_items = [x for x in clean_items if not re.search(r'\d{2}/\d{2}/\d{4}', x) and x not in ["Wednesday", "Thursday", "Friday", "Monday", "Tuesday"]]
-    
     if content_items:
-        formatted_msg += f" | {content_items[-1]}" # Location is usually last
-        if len(content_items) > 1:
-            formatted_msg += f" | {content_items[0]}" # Classification is usually first/middle
+        formatted_msg += f" | 🏫 {content_items[-1]}"
+    if time_display:
+        formatted_msg += f" | ⏰ {time_display}"
 
-    return formatted_msg
+    return formatted_msg, date_str
 
 def run_check(known_jobs):
     now = datetime.now().strftime("%I:%M %p")
@@ -112,19 +132,25 @@ def run_check(known_jobs):
             page.wait_for_load_state("networkidle")
             time.sleep(5) 
 
-            # --- 2. GO TO JOB BOARD ---
-            print("   ...Checking Job List")
+            # --- 2. GET BLOCKED DATES ---
+            blocked_dates = get_active_dates(page)
+            if blocked_dates:
+                print(f"   🚫 Conflict Guard Active. Blocking: {blocked_dates}")
+            else:
+                print("   ✅ Schedule Clear. No blocked dates.")
+
+            # --- 3. GO TO AVAILABLE JOBS ---
+            print("   ...Checking Available Jobs")
             page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/available", wait_until="networkidle")
             time.sleep(8)
 
-            # --- 3. CHECK FOR NO JOBS ---
+            # --- 4. SCAN & FILTER ---
             if "there are no jobs available" in page.locator("body").inner_text().lower():
                 print("   ✅ Clean scan (No jobs visible).")
                 known_jobs.clear()
                 return
 
-            # --- 4. SMART ROW PARSING ---
-            print("   👀 Jobs detected. Parsing rows...")
+            print("   👀 Jobs detected. Filtering...")
             
             new_jobs_found = []
             current_scan_signatures = set()
@@ -132,12 +158,14 @@ def run_check(known_jobs):
             rows = page.locator("tr").all()
             
             for row in rows:
-                # Use our new smart parser
-                clean_msg = parse_row_to_clean_string(row)
+                clean_msg, job_date = parse_row_to_clean_string(row)
                 
                 if clean_msg:
-                    # Create a simple signature to track duplicates
-                    # We just use the full string as the ID
+                    # CONFLICT CHECK: Is this job on a blocked date?
+                    if job_date in blocked_dates:
+                        # We silently ignore it
+                        continue
+
                     fingerprint = clean_msg
                     current_scan_signatures.add(fingerprint)
 
@@ -154,7 +182,7 @@ def run_check(known_jobs):
                 send_push(msg)
                 known_jobs.update(current_scan_signatures)
             else:
-                print(f"   🤫 Jobs present, but already notified.")
+                print(f"   🤫 Jobs present, but filtered by date or already notified.")
 
         except Exception as e:
             print(f"   ❌ Error: {e}")
@@ -163,7 +191,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. Smart-Parse Mode.")
+    print("🤖 Bot Active. Conflict Guard Enabled.")
     while True:
         run_check(known_jobs)
         time.sleep(60)
