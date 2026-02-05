@@ -261,3 +261,59 @@ def run_check(known_jobs):
                     
                     if fingerprint in known_jobs:
                         current_scan_signatures.add(fingerprint)
+                        continue
+
+                    # --- ⚡ AUTO-ACCEPT LOGIC ---
+                    accepted = False
+                    if AUTO_ACCEPT_ENABLED:
+                        # Use the new helper function to avoid indentation errors
+                        is_too_late = check_prep_deadline(job_date_str)
+
+                        if AUTO_ACCEPT_START_HOUR <= current_hour < AUTO_ACCEPT_END_HOUR:
+                            is_green_list = any(school.upper() in clean_msg.upper() for school in AUTO_ACCEPT_SCHOOLS)
+                            is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
+                            
+                            if is_green_list and is_long_enough and not is_too_late:
+                                success = attempt_auto_accept(page, row, clean_msg)
+                                if success:
+                                    send_push(f"🎉 SECURED JOB ({duration}h): {clean_msg}")
+                                    accepted = True
+                                    blocked_dates.add(job_date_str)
+                                else:
+                                    send_push(f"⚠️ LOST FIGHT FOR: {clean_msg}")
+                            else:
+                                if is_too_late:
+                                    print(f"      🔸 Skipped Auto-Accept (Too Late to Prepare)")
+                                elif not is_green_list:
+                                    print(f"      🔸 Skipped (Not High School)")
+                                elif not is_long_enough:
+                                    print(f"      🔸 Skipped (Too Short: {duration}h)")
+                        else:
+                            print(f"      🔸 Skipped (Outside Active Hours)")
+                    else:
+                        print("      🔸 Skipped (Auto-Accept Disabled)")
+
+                    if not accepted:
+                        print(f"   🚨 NEW LISTING: {clean_msg}")
+                        new_jobs_found.append(clean_msg)
+                        current_scan_signatures.add(fingerprint)
+
+            if new_jobs_found:
+                msg = f"🚨 {len(new_jobs_found)} NEW JOB(S):\n"
+                for job in new_jobs_found:
+                    msg += f"{job}\n"
+                send_push(msg)
+                known_jobs.update(current_scan_signatures)
+
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+        finally:
+            browser.close()
+
+if __name__ == "__main__":
+    known_jobs = set()
+    print("🤖 Bot Active. PREPARATION MODE ENABLED 📋")
+    print(f"   ⏰ Cutoff: 3:00 PM the day before")
+    while True:
+        run_check(known_jobs)
+        time.sleep(60)
