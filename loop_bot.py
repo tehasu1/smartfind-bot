@@ -40,7 +40,11 @@ AUTO_ACCEPT_END_HOUR = 22      # 10:00 PM
 AUTO_ACCEPT_MIN_HOURS = 6.0    # Min duration
 AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
-def send_push(message):
+# --- 🧠 SYSTEM MEMORY (For Heartbeat & Crash Alarm) ---
+LOGIN_FAIL_COUNT = 0
+LAST_HEARTBEAT_DATE = None
+
+def send_push(message, title="SmartFind Bot"):
     try:
         context = ssl._create_unverified_context()
         conn = http.client.HTTPSConnection("api.pushover.net:443", context=context)
@@ -48,7 +52,7 @@ def send_push(message):
             "token": PUSHOVER_TOKEN,
             "user": PUSHOVER_USER,
             "message": message,
-            "title": "SmartFind Bot"
+            "title": title
         })
         conn.request("POST", "/1/messages.json", payload, {"Content-type": "application/x-www-form-urlencoded"})
         conn.getresponse()
@@ -58,14 +62,11 @@ def send_push(message):
 def check_prep_deadline(job_date_str):
     """
     Checks if it is too late to accept the job based on the 3:00 PM day-before rule.
-    Returns True if it IS too late (don't accept).
-    Returns False if we are safe (accept).
     """
     try:
         now = datetime.now()
         job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
         day_before = job_dt - timedelta(days=1)
-        # Set cutoff to 3:00 PM (15:00) on the day before
         cutoff_time = day_before.replace(hour=AUTO_ACCEPT_PREP_CUTOFF, minute=0, second=0, microsecond=0)
         
         if now > cutoff_time:
@@ -74,7 +75,6 @@ def check_prep_deadline(job_date_str):
             return False # Safe
             
     except Exception:
-        # If we can't read the date, assume it's risky and return True (Too late)
         return True
 
 def get_active_dates(page):
@@ -193,8 +193,19 @@ def parse_row_to_clean_string(row_element):
     return formatted_msg, date_str, duration
 
 def run_check(known_jobs):
+    global LOGIN_FAIL_COUNT, LAST_HEARTBEAT_DATE
+    
     now = datetime.now()
     current_hour = now.hour
+    
+    # --- 💓 HEARTBEAT LOGIC ---
+    # Sends a notification once a day at 6 AM
+    if current_hour == 6 and now.minute < 5:
+        today_str = now.strftime("%Y-%m-%d")
+        if LAST_HEARTBEAT_DATE != today_str:
+            send_push("🟢 Daily Heartbeat: Bot is active and scanning.", title="System Status")
+            LAST_HEARTBEAT_DATE = today_str
+
     print(f"[{now.strftime('%I:%M %p')}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
@@ -225,9 +236,24 @@ def run_check(known_jobs):
                         frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
                         frame.locator("#userPin").fill(SF_PASSWORD, timeout=1000)
                         frame.locator("#userPin").press("Enter")
+                        login_success = True
                         break
                     except:
                         continue
+            
+            # --- 🚨 CRASH ALARM LOGIC ---
+            if login_success:
+                if LOGIN_FAIL_COUNT > 0:
+                    print(f"   ✅ Login recovered! (Previously failed {LOGIN_FAIL_COUNT} times)")
+                LOGIN_FAIL_COUNT = 0
+            else:
+                LOGIN_FAIL_COUNT += 1
+                print(f"   ⚠️ Login Failed! (Attempt {LOGIN_FAIL_COUNT}/5)")
+                if LOGIN_FAIL_COUNT >= 5:
+                    send_push("🔴 CRITICAL: Bot cannot login (5 failures). Check password or site.", title="Login Error")
+                    # Reset count to avoid spamming every minute, will alert again in 5 mins if still broken
+                    LOGIN_FAIL_COUNT = 0 
+                return # Stop scan here, don't crash the script
 
             page.wait_for_load_state("networkidle")
             time.sleep(5) 
@@ -266,7 +292,6 @@ def run_check(known_jobs):
                     # --- ⚡ AUTO-ACCEPT LOGIC ---
                     accepted = False
                     if AUTO_ACCEPT_ENABLED:
-                        # Use the new helper function to avoid indentation errors
                         is_too_late = check_prep_deadline(job_date_str)
 
                         if AUTO_ACCEPT_START_HOUR <= current_hour < AUTO_ACCEPT_END_HOUR:
@@ -312,8 +337,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. PREPARATION MODE ENABLED 📋")
-    print(f"   ⏰ Cutoff: 3:00 PM the day before")
+    print("🤖 Bot Active. FEATURES: COMBAT ⚔️ | VACATION 🏖️ | HEARTBEAT 💓")
     while True:
         run_check(known_jobs)
         time.sleep(60)
