@@ -147,6 +147,110 @@ def parse_row_to_clean_string(row_element):
         start_str = time_matches[0]
         end_str = time_matches[1]
         time_display = f"{start_str} - {end_str}"
+        
+        # --- FIX IS HERE: The try/except block is now correctly aligned ---
         try:
             fmt = "%I:%M %p"
             t1 = datetime.strptime(start_str, fmt)
+            t2 = datetime.strptime(end_str, fmt)
+            diff = t2 - t1
+            duration = diff.total_seconds() / 3600.0
+        except:
+            duration = 0.0
+            
+    elif len(time_matches) == 1:
+        time_display = time_matches[0]
+
+    content_items = []
+    for x in clean_items:
+        if date_str in x: continue
+        if x in time_matches: continue
+        if x in ["Wednesday", "Thursday", "Friday", "Monday", "Tuesday", "Saturday", "Sunday"]: continue
+        content_items.append(x)
+
+    formatted_msg = f"📅 {date_str}"
+    if content_items:
+        formatted_msg += f" | 🏫 {content_items[-1]}"
+    if time_display:
+        formatted_msg += f" | ⏰ {time_display}"
+
+    return formatted_msg, date_str, duration
+
+def run_check(known_jobs):
+    now = datetime.now()
+    current_hour = now.hour
+    print(f"[{now.strftime('%I:%M %p')}] 🚀 Scanning SmartFind...")
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True, 
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"]
+        )
+        context = browser.new_context(viewport={'width': 1920, 'height': 1080})
+        page = context.new_page()
+        
+        try:
+            # 1. LOGIN
+            print("   ...Logging in")
+            page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
+            
+            login_success = False
+            try:
+                page.locator("#userId").fill(SF_USERNAME, timeout=2000)
+                page.locator("#userPin").fill(SF_PASSWORD, timeout=2000)
+                page.locator("#userPin").press("Enter")
+                login_success = True
+            except:
+                pass
+            
+            if not login_success:
+                for frame in page.frames:
+                    try:
+                        frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
+                        frame.locator("#userPin").fill(SF_PASSWORD, timeout=1000)
+                        frame.locator("#userPin").press("Enter")
+                        break
+                    except:
+                        continue
+
+            page.wait_for_load_state("networkidle")
+            time.sleep(5) 
+
+            # 2. GET BLOCKED DATES
+            blocked_dates = get_active_dates(page)
+
+            # 3. GO TO AVAILABLE JOBS
+            print("   ...Checking Available Jobs")
+            page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/available", wait_until="networkidle")
+            time.sleep(8)
+
+            if "there are no jobs available" in page.locator("body").inner_text().lower():
+                print("   ✅ Clean scan (No jobs visible).")
+                known_jobs.clear()
+                return
+
+            print("   👀 Jobs detected. Analyzing...")
+            new_jobs_found = []
+            current_scan_signatures = set()
+            rows = page.locator("tr").all()
+            
+            for row in rows:
+                clean_msg, job_date_str, duration = parse_row_to_clean_string(row)
+                if clean_msg:
+                    fingerprint = clean_msg
+                    
+                    if job_date_str in blocked_dates:
+                        print(f"      🔸 IGNORED (Conflict/Blackout): {clean_msg}")
+                        continue
+                    
+                    if fingerprint in known_jobs:
+                        current_scan_signatures.add(fingerprint)
+                        continue
+
+                    # --- ⚡ AUTO-ACCEPT LOGIC ---
+                    accepted = False
+                    if AUTO_ACCEPT_ENABLED:
+                        # Check Prep Cutoff (3PM Day Before)
+                        try:
+                            job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
+                            day_before = job_dt - timedelta(days=1)
