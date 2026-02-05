@@ -17,18 +17,10 @@ PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 # --- 🎛️ CONTROL PANEL ---
 
 # 1. MASTER SWITCH
-# True = Hunter Mode (Auto-Accepts jobs).
-# False = Watcher Mode (Only notifies you).
 AUTO_ACCEPT_ENABLED = True 
 
 # 2. BLACKOUT SETTINGS 🚫
-# A. Single Days (e.g. random doctor appointments)
-MANUAL_BLACKOUT_DATES = [
-    # "02/14/2026", 
-]
-
-# B. Date Range (e.g. Vacations) - MM/DD/YYYY
-# Set to None if you don't have a vacation planned.
+MANUAL_BLACKOUT_DATES = []
 BLACKOUT_RANGE_START = "03/23/2026"
 BLACKOUT_RANGE_END   = "05/10/2026"
 
@@ -45,7 +37,8 @@ AUTO_ACCEPT_SCHOOLS = [
 # 4. SETTINGS
 AUTO_ACCEPT_START_HOUR = 6     # 6:00 AM
 AUTO_ACCEPT_END_HOUR = 22      # 10:00 PM
-AUTO_ACCEPT_MIN_HOURS = 6.0    # Minimum shift duration
+AUTO_ACCEPT_MIN_HOURS = 6.0    # Min duration
+AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
 def send_push(message):
     try:
@@ -63,15 +56,13 @@ def send_push(message):
         pass
 
 def get_active_dates(page):
-    """Scrapes schedule AND generates blackout dates from the control panel."""
+    """Scrapes schedule AND generates blackout dates."""
     print("   ...Checking Schedule for conflicts")
     blocked_dates = set()
     
-    # 1. Add Single Manual Dates
     for date in MANUAL_BLACKOUT_DATES:
         blocked_dates.add(date)
 
-    # 2. Add Date Range (Vacation Mode)
     if BLACKOUT_RANGE_START and BLACKOUT_RANGE_END:
         try:
             start = datetime.strptime(BLACKOUT_RANGE_START, "%m/%d/%Y")
@@ -80,11 +71,9 @@ def get_active_dates(page):
             for i in range(delta.days + 1):
                 day = start + timedelta(days=i)
                 blocked_dates.add(day.strftime("%m/%d/%Y"))
-            print(f"   🏖️ Vacation Mode: Blocking {delta.days + 1} days ({BLACKOUT_RANGE_START} - {BLACKOUT_RANGE_END})")
         except ValueError:
-            print("   ⚠️ Error: Check your Blackout Date formats (MM/DD/YYYY)")
+            print("   ⚠️ Error: Check Blackout Date formats")
 
-    # 3. Add Scraped Dates from Website
     try:
         page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/active", wait_until="networkidle")
         time.sleep(5)
@@ -101,20 +90,14 @@ def get_active_dates(page):
     return blocked_dates
 
 def attempt_auto_accept(page, row_element, job_details):
-    """
-    COMBAT MODE: Repeats the accept/confirm cycle until the job is secured.
-    """
     print(f"   ⚔️ ENGAGING COMBAT MODE for: {job_details}")
-    
     attempt_count = 0
     max_attempts = 30 
     
     while row_element.is_visible() and attempt_count < max_attempts:
         attempt_count += 1
         print(f"      👊 Attempt {attempt_count}/{max_attempts}...")
-
         try:
-            # 1. Click Green Checkmark
             accept_btn = row_element.locator("td").last.locator("a, button, i").first
             if accept_btn.is_visible():
                 accept_btn.click()
@@ -122,43 +105,26 @@ def attempt_auto_accept(page, row_element, job_details):
                 print("      ❌ Green button disappeared.")
                 return False 
 
-            # 2. Click Confirm (The Popup)
             try:
                 confirm_btn = page.get_by_role("button", name="Confirm")
                 confirm_btn.wait_for(state="visible", timeout=1500)
                 confirm_btn.click()
-                print("      👉 Clicked 'Confirm'")
             except:
-                print("      ⚠️ Popup failed to appear/click. Retrying cycle...")
                 continue 
 
-            # 3. Check for the Red "Held by System" Banner
             time.sleep(1.5)
             red_banner = page.get_by_text("substitute called by the system")
-            
             if red_banner.is_visible():
-                print("      ⛔ BLOCKED: Job held by system. Mashing again in 1s...")
                 continue
             
-            # 4. Check Success
             if not row_element.is_visible():
-                print("      ✨ Job row vanished. Assuming VICTORY.")
                 return True
-            
-            print("      ❓ Row still visible, no error. Clicking again to be sure.")
-
-        except Exception as e:
-            print(f"      ⚠️ Combat Loop Error: {e}")
+        except Exception:
             time.sleep(1)
 
-    if attempt_count >= max_attempts:
-        print("      ❌ Max attempts reached. Walking away.")
-        return False
-
-    return True
+    return False
 
 def parse_row_to_clean_string(row_element):
-    """Returns: (formatted_msg, date_str, duration_hours)"""
     if not row_element.is_visible(): return None, None, 0
     text_list = row_element.inner_text().split('\n')
     clean_items = [item.strip() for item in text_list if item.strip()]
@@ -170,7 +136,6 @@ def parse_row_to_clean_string(row_element):
     date_match = re.search(r'\d{2}/\d{2}/\d{4}', full_string)
     date_str = date_match.group(0) if date_match else "Unknown"
 
-    # --- TIME & DURATION ---
     time_matches = re.findall(r'\d{1,2}:\d{2}\s?[AP]M', full_string)
     time_display = ""
     duration = 0.0
@@ -190,7 +155,6 @@ def parse_row_to_clean_string(row_element):
     elif len(time_matches) == 1:
         time_display = time_matches[0]
 
-    # --- CONTENT EXTRACTION ---
     content_items = []
     for x in clean_items:
         if date_str in x: continue
@@ -239,87 +203,8 @@ def run_check(known_jobs):
             page.wait_for_load_state("networkidle")
             time.sleep(5) 
 
-            # 2. GET BLOCKED DATES (Web Schedule + Manual Range)
+            # 2. GET BLOCKED DATES
             blocked_dates = get_active_dates(page)
 
             # 3. GO TO AVAILABLE JOBS
             print("   ...Checking Available Jobs")
-            page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/available", wait_until="networkidle")
-            time.sleep(8)
-
-            # 4. SCAN
-            if "there are no jobs available" in page.locator("body").inner_text().lower():
-                print("   ✅ Clean scan (No jobs visible).")
-                known_jobs.clear()
-                return
-
-            print("   👀 Jobs detected. Analyzing...")
-            new_jobs_found = []
-            current_scan_signatures = set()
-            rows = page.locator("tr").all()
-            
-            for row in rows:
-                clean_msg, job_date, duration = parse_row_to_clean_string(row)
-                if clean_msg:
-                    fingerprint = clean_msg
-                    
-                    if job_date in blocked_dates:
-                        print(f"      🔸 IGNORED (Conflict/Blackout): {clean_msg}")
-                        continue
-                    
-                    if fingerprint in known_jobs:
-                        current_scan_signatures.add(fingerprint)
-                        continue
-
-                    # --- ⚡ AUTO-ACCEPT LOGIC ---
-                    accepted = False
-                    if AUTO_ACCEPT_ENABLED:
-                        if AUTO_ACCEPT_START_HOUR <= current_hour < AUTO_ACCEPT_END_HOUR:
-                            # 1. Check School Name
-                            is_green_list = any(school.upper() in clean_msg.upper() for school in AUTO_ACCEPT_SCHOOLS)
-                            
-                            # 2. Check Duration
-                            is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
-                            
-                            if is_green_list and is_long_enough:
-                                success = attempt_auto_accept(page, row, clean_msg)
-                                if success:
-                                    send_push(f"🎉 SECURED JOB ({duration}h): {clean_msg}")
-                                    accepted = True
-                                    blocked_dates.add(job_date)
-                                else:
-                                    send_push(f"⚠️ LOST FIGHT FOR: {clean_msg}")
-                            else:
-                                if not is_green_list:
-                                    print(f"      🔸 Skipped (Not High School)")
-                                elif not is_long_enough:
-                                    print(f"      🔸 Skipped (Too Short: {duration}h)")
-                        else:
-                            print(f"      🔸 Skipped (Outside Hours)")
-                    else:
-                        print("      🔸 Skipped (Auto-Accept Disabled)")
-
-                    if not accepted:
-                        print(f"   🚨 NEW LISTING: {clean_msg}")
-                        new_jobs_found.append(clean_msg)
-                        current_scan_signatures.add(fingerprint)
-
-            if new_jobs_found:
-                msg = f"🚨 {len(new_jobs_found)} NEW JOB(S):\n"
-                for job in new_jobs_found:
-                    msg += f"{job}\n"
-                send_push(msg)
-                known_jobs.update(current_scan_signatures)
-
-        except Exception as e:
-            print(f"   ❌ Error: {e}")
-        finally:
-            browser.close()
-
-if __name__ == "__main__":
-    known_jobs = set()
-    print("🤖 Bot Active. VACATION MODE ENABLED 🏖️")
-    print(f"   🚫 Blackout Range: {BLACKOUT_RANGE_START} to {BLACKOUT_RANGE_END}")
-    while True:
-        run_check(known_jobs)
-        time.sleep(60)
