@@ -55,16 +55,36 @@ def send_push(message):
     except:
         pass
 
+def check_prep_deadline(job_date_str):
+    """
+    Checks if it is too late to accept the job based on the 3:00 PM day-before rule.
+    Returns True if it IS too late (don't accept).
+    Returns False if we are safe (accept).
+    """
+    try:
+        now = datetime.now()
+        job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
+        day_before = job_dt - timedelta(days=1)
+        # Set cutoff to 3:00 PM (15:00) on the day before
+        cutoff_time = day_before.replace(hour=AUTO_ACCEPT_PREP_CUTOFF, minute=0, second=0, microsecond=0)
+        
+        if now > cutoff_time:
+            return True # Too late
+        else:
+            return False # Safe
+            
+    except Exception:
+        # If we can't read the date, assume it's risky and return True (Too late)
+        return True
+
 def get_active_dates(page):
     """Scrapes schedule AND generates blackout dates."""
     print("   ...Checking Schedule for conflicts")
     blocked_dates = set()
     
-    # Manual Dates
     for date in MANUAL_BLACKOUT_DATES:
         blocked_dates.add(date)
 
-    # Vacation Range
     if BLACKOUT_RANGE_START and BLACKOUT_RANGE_END:
         try:
             start = datetime.strptime(BLACKOUT_RANGE_START, "%m/%d/%Y")
@@ -76,7 +96,6 @@ def get_active_dates(page):
         except ValueError:
             print("   ⚠️ Error: Check Blackout Date formats")
 
-    # Scrape Website
     try:
         page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/active", wait_until="networkidle")
         time.sleep(5)
@@ -147,8 +166,6 @@ def parse_row_to_clean_string(row_element):
         start_str = time_matches[0]
         end_str = time_matches[1]
         time_display = f"{start_str} - {end_str}"
-        
-        # --- FIX IS HERE: The try/except block is now correctly aligned ---
         try:
             fmt = "%I:%M %p"
             t1 = datetime.strptime(start_str, fmt)
@@ -157,7 +174,6 @@ def parse_row_to_clean_string(row_element):
             duration = diff.total_seconds() / 3600.0
         except:
             duration = 0.0
-            
     elif len(time_matches) == 1:
         time_display = time_matches[0]
 
@@ -245,12 +261,3 @@ def run_check(known_jobs):
                     
                     if fingerprint in known_jobs:
                         current_scan_signatures.add(fingerprint)
-                        continue
-
-                    # --- ⚡ AUTO-ACCEPT LOGIC ---
-                    accepted = False
-                    if AUTO_ACCEPT_ENABLED:
-                        # Check Prep Cutoff (3PM Day Before)
-                        try:
-                            job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
-                            day_before = job_dt - timedelta(days=1)
