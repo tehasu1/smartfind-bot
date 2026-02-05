@@ -37,10 +37,14 @@ AUTO_ACCEPT_SCHOOLS = [
 # 4. SETTINGS
 AUTO_ACCEPT_START_HOUR = 6     # 6:00 AM
 AUTO_ACCEPT_END_HOUR = 22      # 10:00 PM
-AUTO_ACCEPT_MIN_HOURS = 6.0    # Min duration
+AUTO_ACCEPT_MIN_HOURS = 6.0    # Auto-Accept only if 6+ hours
 AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
-# --- 🧠 SYSTEM MEMORY (For Heartbeat & Crash Alarm) ---
+# 5. NOISE FILTER 🔇
+# Only send a notification if the job is at least this long.
+NOTIFICATION_MIN_HOURS = 5.0
+
+# --- 🧠 SYSTEM MEMORY ---
 LOGIN_FAIL_COUNT = 0
 LAST_HEARTBEAT_DATE = None
 
@@ -199,7 +203,6 @@ def run_check(known_jobs):
     current_hour = now.hour
     
     # --- 💓 HEARTBEAT LOGIC ---
-    # Sends a notification once a day at 6 AM
     if current_hour == 6 and now.minute < 5:
         today_str = now.strftime("%Y-%m-%d")
         if LAST_HEARTBEAT_DATE != today_str:
@@ -251,9 +254,8 @@ def run_check(known_jobs):
                 print(f"   ⚠️ Login Failed! (Attempt {LOGIN_FAIL_COUNT}/5)")
                 if LOGIN_FAIL_COUNT >= 5:
                     send_push("🔴 CRITICAL: Bot cannot login (5 failures). Check password or site.", title="Login Error")
-                    # Reset count to avoid spamming every minute, will alert again in 5 mins if still broken
                     LOGIN_FAIL_COUNT = 0 
-                return # Stop scan here, don't crash the script
+                return 
 
             page.wait_for_load_state("networkidle")
             time.sleep(5) 
@@ -318,9 +320,14 @@ def run_check(known_jobs):
                     else:
                         print("      🔸 Skipped (Auto-Accept Disabled)")
 
+                    # --- 🔔 NOTIFICATION LOGIC (With Noise Filter) ---
                     if not accepted:
-                        print(f"   🚨 NEW LISTING: {clean_msg}")
-                        new_jobs_found.append(clean_msg)
+                        if duration >= NOTIFICATION_MIN_HOURS:
+                            print(f"   🚨 NEW LISTING: {clean_msg}")
+                            new_jobs_found.append(clean_msg)
+                        else:
+                            print(f"      😶 Muted (Too short: {duration}h)")
+                            
                         current_scan_signatures.add(fingerprint)
 
             if new_jobs_found:
@@ -337,7 +344,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: COMBAT ⚔️ | VACATION 🏖️ | HEARTBEAT 💓")
+    print("🤖 Bot Active. FEATURES: COMBAT | VACATION | HEARTBEAT | FILTER: >5h")
     while True:
         run_check(known_jobs)
         time.sleep(60)
