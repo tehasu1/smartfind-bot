@@ -118,7 +118,7 @@ def get_active_dates(page):
 def attempt_auto_accept(page, row_element, job_details):
     print(f"   ⚔️ ENGAGING COMBAT MODE for: {job_details}")
     attempt_count = 0
-    # UPDATE: Increased from 30 to 150 (Approx 4 minutes of fighting)
+    # STUBBORN MODE: 150 attempts (~4 minutes)
     max_attempts = 150 
     
     while row_element.is_visible() and attempt_count < max_attempts:
@@ -214,9 +214,18 @@ def run_check(known_jobs):
     print(f"[{now.strftime('%I:%M %p')}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
+        # --- LOW MEMORY LAUNCH ARGS ---
         browser = p.chromium.launch(
             headless=True, 
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"]
+            args=[
+                "--no-sandbox", 
+                "--disable-setuid-sandbox", 
+                "--disable-dev-shm-usage", 
+                "--disable-gpu", 
+                "--single-process", 
+                "--no-zygote",              # New: Saves Memory
+                "--disable-extensions"      # New: Saves Memory
+            ]
         )
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
@@ -295,7 +304,7 @@ def run_check(known_jobs):
 
                     # --- ⚡ AUTO-ACCEPT LOGIC ---
                     accepted = False
-                    fought_and_lost = False # Flag to prevent double notification
+                    fought_and_lost = False 
                     
                     if AUTO_ACCEPT_ENABLED:
                         is_too_late = check_prep_deadline(job_date_str)
@@ -312,7 +321,7 @@ def run_check(known_jobs):
                                     blocked_dates.add(job_date_str)
                                 else:
                                     send_push(f"⚠️ LOST FIGHT FOR: {clean_msg}")
-                                    fought_and_lost = True # Tried, failed, and notified. Don't notify again.
+                                    fought_and_lost = True 
                             else:
                                 if is_too_late:
                                     print(f"      🔸 Skipped Auto-Accept (Too Late to Prepare)")
@@ -326,7 +335,6 @@ def run_check(known_jobs):
                         print("      🔸 Skipped (Auto-Accept Disabled)")
 
                     # --- 🔔 NOTIFICATION LOGIC ---
-                    # Only send "New Job" if we didn't just fight for it
                     if not accepted and not fought_and_lost:
                         if duration >= NOTIFICATION_MIN_HOURS:
                             print(f"   🚨 NEW LISTING: {clean_msg}")
@@ -350,7 +358,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. STUBBORN MODE: 150 attempts (~4 mins).")
+    print("🤖 Bot Active. FEATURES: STUBBORN | VACATION | LOW-MEM | FILTER")
     while True:
         run_check(known_jobs)
         time.sleep(60)
