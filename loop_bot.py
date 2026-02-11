@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 from datetime import datetime, timedelta
 
+# ==========================================
+# ⚙️ CONFIGURATION
+# ==========================================
 load_dotenv()
 SF_USERNAME = os.getenv("SF_USERNAME")
 SF_PASSWORD = os.getenv("SF_PASSWORD")
@@ -19,12 +22,15 @@ PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 # 1. MASTER SWITCH
 AUTO_ACCEPT_ENABLED = True 
 
-# 2. BLACKOUT SETTINGS 🚫
+# 2. SAFETY SWITCHES (NEW) 🛡️
+ENABLE_24H_RULE = True   # Set to False if you want to pick up last-minute shifts
+
+# 3. BLACKOUT SETTINGS 🚫
 MANUAL_BLACKOUT_DATES = []
 BLACKOUT_RANGE_START = "03/23/2026"
 BLACKOUT_RANGE_END   = "05/10/2026"
 
-# 3. STRICT HIGH SCHOOL LIST
+# 4. STRICT HIGH SCHOOL LIST
 AUTO_ACCEPT_SCHOOLS = [
     "EL CERRITO HIGH",
     "RICHMOND HIGH SCHOOL",
@@ -34,12 +40,11 @@ AUTO_ACCEPT_SCHOOLS = [
     "HERCULES HIGH SCHOOL"
 ]
 
-# 4. SETTINGS
-# Note: Start/End hours removed to enable 24/7 scanning.
+# 5. SETTINGS
 AUTO_ACCEPT_MIN_HOURS = 6.0    # Auto-Accept only if 6+ hours
 AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
-# 5. NOISE FILTER 🔇
+# 6. NOISE FILTER 🔇
 # Only send a notification if the job is at least this long.
 NOTIFICATION_MIN_HOURS = 5.0
 
@@ -47,6 +52,9 @@ NOTIFICATION_MIN_HOURS = 5.0
 LOGIN_FAIL_COUNT = 0
 LAST_HEARTBEAT_DATE = None
 
+# ==========================================
+# 📟 NOTIFICATION SYSTEM
+# ==========================================
 def send_push(message, title="SmartFind Bot"):
     try:
         context = ssl._create_unverified_context()
@@ -62,32 +70,32 @@ def send_push(message, title="SmartFind Bot"):
     except:
         pass
 
+# ==========================================
+# 🛡️ RULES & LOGIC
+# ==========================================
 def check_24h_rule(job_date_str):
     """
-    Returns True if the job is SAFE to accept (starts more than 24 hours from now).
-    Returns False if the job is TOO SOON (starts within 24 hours).
+    Returns True if SAFE.
+    Returns False if TOO SOON.
     """
+    # 1. Check the Toggle Switch
+    if not ENABLE_24H_RULE:
+        return True # The rule is OFF, so everything is "safe"
+
+    # 2. Run the Logic
     try:
-        # Parse the job date (e.g. "02/12/2026")
         job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
-        
-        # Current time in PST (UTC - 8)
         now_pst = datetime.utcnow() - timedelta(hours=8)
         
-        # If job is less than 24 hours (86400 seconds) away, SKIP IT.
         if (job_dt - now_pst).total_seconds() < 86400:
             print(f"      🛑 24H RULE: Job on {job_date_str} starts too soon (<24h).")
             return False
-        
-        return True # Safe
+        return True 
     except Exception as e:
         print(f"      ⚠️ Date Parse Error: {e}")
-        return False # Play it safe
+        return False
 
 def check_prep_deadline(job_date_str):
-    """
-    Checks if it is too late to accept the job based on the 3:00 PM day-before rule.
-    """
     try:
         now = datetime.now()
         job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
@@ -98,7 +106,6 @@ def check_prep_deadline(job_date_str):
             return True # Too late
         else:
             return False # Safe
-            
     except Exception:
         return True
 
@@ -123,54 +130,57 @@ def get_active_dates(page):
 
     try:
         page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/active", wait_until="networkidle")
-        time.sleep(5)
-        rows = page.locator("tr").all()
-        for row in rows:
-            if not row.is_visible(): continue
-            text = row.inner_text()
-            date_match = re.search(r'\d{2}/\d{2}/\d{4}', text)
-            if date_match:
-                blocked_dates.add(date_match.group(0))
+        time.sleep(3)
+        content = page.content()
+        found_dates = re.findall(r'\d{2}/\d{2}/\d{4}', content)
+        for date in found_dates:
+            blocked_dates.add(date)
     except Exception as e:
         print(f"   ⚠️ Could not load schedule: {e}")
         
     return blocked_dates
 
+# ==========================================
+# 🤖 BROWSER ACTIONS
+# ==========================================
 def attempt_auto_accept(page, row_element, job_details):
-    print(f"   ⚔️ ENGAGING COMBAT MODE for: {job_details}")
+    print(f"   ⚔️ ENGAGING COMBAT MODE (4 Minutes)...")
+    # 500 attempts * 0.5s = ~4 minutes
+    max_attempts = 500 
     attempt_count = 0
-    # STUBBORN MODE: 150 attempts (~4 minutes)
-    max_attempts = 150 
     
     while row_element.is_visible() and attempt_count < max_attempts:
         attempt_count += 1
-        print(f"      👊 Attempt {attempt_count}/{max_attempts}...")
         try:
-            accept_btn = row_element.locator("td").last.locator("a, button, i").first
+            # Match any button/link with "Accept" text
+            accept_btn = row_element.locator("a, button").filter(has_text="Accept").first
+            
             if accept_btn.is_visible():
                 accept_btn.click()
             else:
-                print("      ❌ Green button disappeared.")
-                return False 
+                # Fallback: Last column button
+                fallback_btn = row_element.locator("td").last.locator("a, button, i").first
+                if fallback_btn.is_visible():
+                    fallback_btn.click()
+                else:
+                    return False 
 
             try:
                 confirm_btn = page.get_by_role("button", name="Confirm")
                 confirm_btn.wait_for(state="visible", timeout=1500)
                 confirm_btn.click()
-            except:
-                continue 
-
-            time.sleep(1.5)
-            red_banner = page.get_by_text("substitute called by the system")
-            if red_banner.is_visible():
-                # Just keep looping, don't exit
-                continue
-            
-            if not row_element.is_visible():
                 return True
-        except Exception:
-            time.sleep(1)
-
+            except:
+                pass
+            
+            time.sleep(0.5)
+            try:
+                if page.get_by_text("substitute called by the system").is_visible():
+                    continue
+            except:
+                pass     
+        except:
+            time.sleep(0.5)
     return False
 
 def parse_row_to_clean_string(row_element):
@@ -190,15 +200,12 @@ def parse_row_to_clean_string(row_element):
     duration = 0.0
 
     if len(time_matches) >= 2:
-        start_str = time_matches[0]
-        end_str = time_matches[1]
-        time_display = f"{start_str} - {end_str}"
         try:
             fmt = "%I:%M %p"
-            t1 = datetime.strptime(start_str, fmt)
-            t2 = datetime.strptime(end_str, fmt)
-            diff = t2 - t1
-            duration = diff.total_seconds() / 3600.0
+            t1 = datetime.strptime(time_matches[0], fmt)
+            t2 = datetime.strptime(time_matches[1], fmt)
+            duration = (t2 - t1).total_seconds() / 3600.0
+            time_display = f"{time_matches[0]} - {time_matches[1]}"
         except:
             duration = 0.0
     elif len(time_matches) == 1:
@@ -219,13 +226,14 @@ def parse_row_to_clean_string(row_element):
 
     return formatted_msg, date_str, duration
 
+# ==========================================
+# 🚀 MAIN LOOP
+# ==========================================
 def run_check(known_jobs):
     global LOGIN_FAIL_COUNT, LAST_HEARTBEAT_DATE
     
-    # Use PST for display
     now_pst = datetime.utcnow() - timedelta(hours=8)
     
-    # --- 💓 HEARTBEAT ---
     if now_pst.hour == 6 and now_pst.minute < 5:
         today_str = now_pst.strftime("%Y-%m-%d")
         if LAST_HEARTBEAT_DATE != today_str:
@@ -235,7 +243,6 @@ def run_check(known_jobs):
     print(f"[{now_pst.strftime('%I:%M %p')}] 🚀 Scanning SmartFind...")
     
     with sync_playwright() as p:
-        # --- LOW MEMORY LAUNCH ARGS ---
         browser = p.chromium.launch(
             headless=True, 
             args=[
@@ -266,7 +273,6 @@ def run_check(known_jobs):
                 pass
             
             if not login_success:
-                # --- IFRAME HANDLING (Preserved) ---
                 for frame in page.frames:
                     try:
                         frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
@@ -277,7 +283,6 @@ def run_check(known_jobs):
                     except:
                         continue
             
-            # CRASH ALARM
             if login_success:
                 if LOGIN_FAIL_COUNT > 0:
                     print(f"   ✅ Login recovered! (Previously failed {LOGIN_FAIL_COUNT} times)")
@@ -329,11 +334,9 @@ def run_check(known_jobs):
                     fought_and_lost = False 
                     
                     if AUTO_ACCEPT_ENABLED:
-                        # Safety Rules
                         is_too_late = check_prep_deadline(job_date_str)
                         is_safe_time = check_24h_rule(job_date_str)
 
-                        # Match Criteria
                         is_green_list = any(school.upper() in clean_msg.upper() for school in AUTO_ACCEPT_SCHOOLS)
                         is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
                         
@@ -358,14 +361,10 @@ def run_check(known_jobs):
                     else:
                         print("      🔸 Skipped (Auto-Accept Disabled)")
 
-                    # --- 🔔 NOTIFICATION LOGIC ---
                     if not accepted and not fought_and_lost:
                         if duration >= NOTIFICATION_MIN_HOURS:
                             print(f"   🚨 NEW LISTING: {clean_msg}")
                             new_jobs_found.append(clean_msg)
-                        else:
-                            print(f"      😶 Muted (Too short: {duration}h)")
-                            
                         current_scan_signatures.add(fingerprint)
 
             if new_jobs_found:
@@ -382,7 +381,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: ORIGINAL-LOGIC | 24H RULE | LOW-MEM")
+    print("🤖 Bot Active. FEATURES: STUBBORN-4MIN | 24H-TOGGLE | LOW-MEM")
     while True:
         run_check(known_jobs)
         time.sleep(60)
