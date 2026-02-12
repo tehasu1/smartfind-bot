@@ -22,13 +22,23 @@ PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 # 1. MASTER SWITCH
 AUTO_ACCEPT_ENABLED = True 
 
-# 2. SAFETY SWITCHES (NEW) 🛡️
+# 2. SAFETY SWITCHES 🛡️
 ENABLE_24H_RULE = True   # Set to False if you want to pick up last-minute shifts
 
 # 3. BLACKOUT SETTINGS 🚫
-MANUAL_BLACKOUT_DATES = []
-BLACKOUT_RANGE_START = "03/23/2026"
-BLACKOUT_RANGE_END   = "05/10/2026"
+# We manually list the "bookend" dates to create your available window.
+MANUAL_BLACKOUT_DATES = [
+    # BLOCK 1: March 21 - March 29
+    "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
+    "03/26/2026", "03/27/2026", "03/28/2026", "03/29/2026",
+    
+    # BLOCK 2: April 30 - May 10
+    "04/30/2026", 
+    "05/01/2026", "05/02/2026", "05/03/2026", "05/04/2026", "05/05/2026",
+    "05/06/2026", "05/07/2026", "05/08/2026", "05/09/2026", "05/10/2026"
+]
+BLACKOUT_RANGE_START = None
+BLACKOUT_RANGE_END   = None
 
 # 4. STRICT HIGH SCHOOL LIST
 AUTO_ACCEPT_SCHOOLS = [
@@ -45,7 +55,6 @@ AUTO_ACCEPT_MIN_HOURS = 6.0    # Auto-Accept only if 6+ hours
 AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
 # 6. NOISE FILTER 🔇
-# Only send a notification if the job is at least this long.
 NOTIFICATION_MIN_HOURS = 5.0
 
 # --- 🧠 SYSTEM MEMORY ---
@@ -74,15 +83,9 @@ def send_push(message, title="SmartFind Bot"):
 # 🛡️ RULES & LOGIC
 # ==========================================
 def check_24h_rule(job_date_str):
-    """
-    Returns True if SAFE.
-    Returns False if TOO SOON.
-    """
-    # 1. Check the Toggle Switch
     if not ENABLE_24H_RULE:
-        return True # The rule is OFF, so everything is "safe"
+        return True 
 
-    # 2. Run the Logic
     try:
         job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
         now_pst = datetime.utcnow() - timedelta(hours=8)
@@ -145,7 +148,6 @@ def get_active_dates(page):
 # ==========================================
 def attempt_auto_accept(page, row_element, job_details):
     print(f"   ⚔️ ENGAGING COMBAT MODE (4 Minutes)...")
-    # 500 attempts * 0.5s = ~4 minutes
     max_attempts = 500 
     attempt_count = 0
     
@@ -324,6 +326,16 @@ def run_check(known_jobs):
                     if job_date_str in blocked_dates:
                         print(f"      🔸 IGNORED (Conflict/Blackout): {clean_msg}")
                         continue
+                        
+                    # --- NEW: TUESDAY CHECK ---
+                    # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+                    try:
+                        job_dt_check = datetime.strptime(job_date_str, "%m/%d/%Y")
+                        if job_dt_check.weekday() == 1:
+                            print(f"      🔸 IGNORED (Tuesday Blackout): {clean_msg}")
+                            continue
+                    except:
+                        pass
                     
                     if fingerprint in known_jobs:
                         current_scan_signatures.add(fingerprint)
@@ -381,7 +393,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: STUBBORN-4MIN | 24H-TOGGLE | LOW-MEM")
+    print("🤖 Bot Active. FEATURES: MAR-MAY-BLOCKS | NO-TUESDAYS | LOW-MEM")
     while True:
         run_check(known_jobs)
         time.sleep(60)
