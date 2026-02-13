@@ -26,7 +26,6 @@ AUTO_ACCEPT_ENABLED = True
 ENABLE_24H_RULE = True   # Set to False if you want to pick up last-minute shifts
 
 # 3. BLACKOUT SETTINGS 🚫
-# We manually list the "bookend" dates to create your available window.
 MANUAL_BLACKOUT_DATES = [
     # BLOCK 1: March 21 - March 29
     "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
@@ -151,38 +150,50 @@ def attempt_auto_accept(page, row_element, job_details):
     max_attempts = 500 
     attempt_count = 0
     
-    while row_element.is_visible() and attempt_count < max_attempts:
+    # We define the specific job date/time string to track if it's still there
+    # This prevents the bot from giving up just because a button flickers
+    
+    while attempt_count < max_attempts:
         attempt_count += 1
-        try:
-            # Match any button/link with "Accept" text
-            accept_btn = row_element.locator("a, button").filter(has_text="Accept").first
-            
-            if accept_btn.is_visible():
-                accept_btn.click()
-            else:
-                # Fallback: Last column button
-                fallback_btn = row_element.locator("td").last.locator("a, button, i").first
-                if fallback_btn.is_visible():
-                    fallback_btn.click()
-                else:
-                    return False 
+        
+        # 1. Check if the row is actually gone (Victory Check)
+        if not row_element.is_visible():
+            print("      ✨ The job row is gone. Assuming success.")
+            return True
 
-            try:
-                confirm_btn = page.get_by_role("button", name="Confirm")
-                confirm_btn.wait_for(state="visible", timeout=1500)
-                confirm_btn.click()
-                return True
-            except:
-                pass
-            
-            time.sleep(0.5)
-            try:
-                if page.get_by_text("substitute called by the system").is_visible():
-                    continue
-            except:
-                pass     
+        # 2. Try to click ACCEPT (Aggressive)
+        try:
+            # Try specific "Accept" text first
+            page.locator("a:has-text('Accept'), button:has-text('Accept')").first.click(timeout=500)
         except:
-            time.sleep(0.5)
+            # If that fails, click the generic green button/icon in the last column
+            try:
+                row_element.locator("td").last.locator("a, button, i").first.click(timeout=500)
+            except:
+                pass 
+
+        # 3. Try to click CONFIRM (Aggressive)
+        try:
+            confirm_btn = page.locator("button:has-text('Confirm')")
+            if confirm_btn.is_visible():
+                confirm_btn.click(timeout=500)
+                print("      ✅ Clicked Confirm!")
+                # Don't return True yet, wait for row to disappear
+        except:
+            pass
+        
+        # 4. Handle Red Banner (System Error)
+        try:
+            if page.locator("div:has-text('substitute called by the system')").is_visible():
+                # This banner blocks clicks. We wait 1s for it to clear.
+                time.sleep(1)
+                continue 
+        except:
+            pass
+            
+        # Short sleep to prevent CPU spike
+        time.sleep(0.3)
+        
     return False
 
 def parse_row_to_clean_string(row_element):
@@ -328,7 +339,6 @@ def run_check(known_jobs):
                         continue
                         
                     # --- NEW: TUESDAY CHECK ---
-                    # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
                     try:
                         job_dt_check = datetime.strptime(job_date_str, "%m/%d/%Y")
                         if job_dt_check.weekday() == 1:
@@ -393,7 +403,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: MAR-MAY-BLOCKS | NO-TUESDAYS | LOW-MEM")
+    print("🤖 Bot Active. FEATURES: AGGRESSIVE-CLICK | NO-TUESDAYS | LOW-MEM")
     while True:
         run_check(known_jobs)
         time.sleep(60)
