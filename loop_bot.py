@@ -39,8 +39,8 @@ MANUAL_BLACKOUT_DATES = [
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
 
-# 4. STRICT HIGH SCHOOL LIST
-AUTO_ACCEPT_SCHOOLS = [
+# 4. STRICT TARGET SCHOOLS 🎯
+TARGET_HIGH_SCHOOLS = [
     "EL CERRITO HIGH",
     "RICHMOND HIGH SCHOOL",
     "PINOLE HIGH SCHOOL",
@@ -81,6 +81,23 @@ def send_push(message, title="SmartFind Bot"):
 # ==========================================
 # 🛡️ RULES & LOGIC
 # ==========================================
+def is_target_school(clean_msg):
+    """
+    Returns True ONLY if the job is at a designated High School, 
+    OR if it is a Middle School Special Ed position.
+    """
+    msg_upper = clean_msg.upper()
+    
+    # 1. Is it on our High School list?
+    if any(hs in msg_upper for hs in TARGET_HIGH_SCHOOLS):
+        return True
+        
+    # 2. Is it Middle School SP ED?
+    if "MIDDLE" in msg_upper and "SP ED" in msg_upper:
+        return True
+        
+    return False
+
 def check_24h_rule(job_date_str):
     if not ENABLE_24H_RULE:
         return True 
@@ -150,48 +167,36 @@ def attempt_auto_accept(page, row_element, job_details):
     max_attempts = 500 
     attempt_count = 0
     
-    # We define the specific job date/time string to track if it's still there
-    # This prevents the bot from giving up just because a button flickers
-    
     while attempt_count < max_attempts:
         attempt_count += 1
         
-        # 1. Check if the row is actually gone (Victory Check)
         if not row_element.is_visible():
             print("      ✨ The job row is gone. Assuming success.")
             return True
 
-        # 2. Try to click ACCEPT (Aggressive)
         try:
-            # Try specific "Accept" text first
             page.locator("a:has-text('Accept'), button:has-text('Accept')").first.click(timeout=500)
         except:
-            # If that fails, click the generic green button/icon in the last column
             try:
                 row_element.locator("td").last.locator("a, button, i").first.click(timeout=500)
             except:
                 pass 
 
-        # 3. Try to click CONFIRM (Aggressive)
         try:
             confirm_btn = page.locator("button:has-text('Confirm')")
             if confirm_btn.is_visible():
                 confirm_btn.click(timeout=500)
                 print("      ✅ Clicked Confirm!")
-                # Don't return True yet, wait for row to disappear
         except:
             pass
         
-        # 4. Handle Red Banner (System Error)
         try:
             if page.locator("div:has-text('substitute called by the system')").is_visible():
-                # This banner blocks clicks. We wait 1s for it to clear.
                 time.sleep(1)
                 continue 
         except:
             pass
             
-        # Short sleep to prevent CPU spike
         time.sleep(0.3)
         
     return False
@@ -338,7 +343,6 @@ def run_check(known_jobs):
                         print(f"      🔸 IGNORED (Conflict/Blackout): {clean_msg}")
                         continue
                         
-                    # --- NEW: TUESDAY CHECK ---
                     try:
                         job_dt_check = datetime.strptime(job_date_str, "%m/%d/%Y")
                         if job_dt_check.weekday() == 1:
@@ -351,6 +355,12 @@ def run_check(known_jobs):
                         current_scan_signatures.add(fingerprint)
                         continue
 
+                    # --- NEW STRICT FILTER ---
+                    if not is_target_school(clean_msg):
+                        print(f"      🔸 IGNORED (Not Target HS or MS SP ED): {clean_msg}")
+                        current_scan_signatures.add(fingerprint)
+                        continue
+
                     # --- ⚡ AUTO-ACCEPT LOGIC ---
                     accepted = False
                     fought_and_lost = False 
@@ -358,39 +368,42 @@ def run_check(known_jobs):
                     if AUTO_ACCEPT_ENABLED:
                         is_too_late = check_prep_deadline(job_date_str)
                         is_safe_time = check_24h_rule(job_date_str)
-
-                        is_green_list = any(school.upper() in clean_msg.upper() for school in AUTO_ACCEPT_SCHOOLS)
                         is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
                         
-                        if is_green_list and is_long_enough and not is_too_late and is_safe_time:
+                        if is_long_enough and not is_too_late and is_safe_time:
+                            
+                            # 🚨 NEW: IMMEDIATE PUSH NOTIFICATION
+                            print(f"   ⚡ Sending immediate notification for combat mode...")
+                            send_push(f"⚡ COMBAT MODE INITIATED:\n{clean_msg}")
+                            
+                            # ⚔️ BEGIN THE FIGHT
                             success = attempt_auto_accept(page, row, clean_msg)
                             if success:
-                                send_push(f"🎉 SECURED JOB ({duration}h): {clean_msg}")
+                                send_push(f"🎉 SECURED JOB ({duration}h):\n{clean_msg}")
                                 accepted = True
                                 blocked_dates.add(job_date_str)
                             else:
-                                send_push(f"⚠️ LOST FIGHT FOR: {clean_msg}")
+                                send_push(f"⚠️ LOST FIGHT FOR:\n{clean_msg}")
                                 fought_and_lost = True 
                         else:
                             if not is_safe_time:
-                                print(f"      🔸 Skipped (24h Rule)")
+                                print(f"      🔸 Auto-Accept Skipped (24h Rule)")
                             elif is_too_late:
-                                print(f"      🔸 Skipped (Too Late to Prepare)")
-                            elif not is_green_list:
-                                print(f"      🔸 Skipped (Not High School)")
+                                print(f"      🔸 Auto-Accept Skipped (Too Late to Prepare)")
                             elif not is_long_enough:
-                                print(f"      🔸 Skipped (Too Short: {duration}h)")
+                                print(f"      🔸 Auto-Accept Skipped (Too Short: {duration}h)")
                     else:
-                        print("      🔸 Skipped (Auto-Accept Disabled)")
+                        print("      🔸 Auto-Accept Disabled")
 
+                    # Standard notification if it passed the school filter but failed an auto-accept rule
                     if not accepted and not fought_and_lost:
                         if duration >= NOTIFICATION_MIN_HOURS:
-                            print(f"   🚨 NEW LISTING: {clean_msg}")
+                            print(f"   🚨 NEW TARGET LISTING: {clean_msg}")
                             new_jobs_found.append(clean_msg)
                         current_scan_signatures.add(fingerprint)
 
             if new_jobs_found:
-                msg = f"🚨 {len(new_jobs_found)} NEW JOB(S):\n"
+                msg = f"🚨 {len(new_jobs_found)} NEW TARGET JOB(S):\n"
                 for job in new_jobs_found:
                     msg += f"{job}\n"
                 send_push(msg)
@@ -403,7 +416,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: AGGRESSIVE-CLICK | NO-TUESDAYS | LOW-MEM")
+    print("🤖 Bot Active. FEATURES: STRICT-FILTER | IMMEDIATE-PUSH | AGGRESSIVE-CLICK")
     while True:
         run_check(known_jobs)
         time.sleep(60)
