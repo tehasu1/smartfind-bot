@@ -25,7 +25,7 @@ AUTO_ACCEPT_ENABLED = True
 # 2. SAFETY SWITCHES 🛡️
 ENABLE_24H_RULE = True   # Set to False if you want to pick up last-minute shifts
 
-# 3. BLACKOUT SETTINGS 🚫
+# 3. HARD BLACKOUT SETTINGS 🚫 (Ignored entirely)
 MANUAL_BLACKOUT_DATES = [
     # BLOCK 1: March 21 - March 29
     "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
@@ -39,6 +39,13 @@ MANUAL_BLACKOUT_DATES = [
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
 
+# 3.5 NOTIFY-ONLY DATES ⚠️ (No Combat, but sends Push)
+NOTIFY_ONLY_DATES = [
+    "03/30/2026", "03/31/2026", "04/01/2026", "04/02/2026", "04/03/2026", 
+    "04/04/2026", "04/05/2026", "04/06/2026", "04/07/2026", "04/08/2026", 
+    "04/09/2026", "04/10/2026"
+]
+
 # 4. STRICT TARGET SCHOOLS 🎯
 TARGET_HIGH_SCHOOLS = [
     "EL CERRITO HIGH",
@@ -50,11 +57,11 @@ TARGET_HIGH_SCHOOLS = [
 ]
 
 # 5. SETTINGS
-AUTO_ACCEPT_MIN_HOURS = 6.0    # Auto-Accept only if 6+ hours
+AUTO_ACCEPT_MIN_HOURS = 4.5    # Auto-Accept only if 4.5+ hours
 AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
 # 6. NOISE FILTER 🔇
-NOTIFICATION_MIN_HOURS = 5.0
+NOTIFICATION_MIN_HOURS = 4.5   # Only notify if 4.5+ hours
 
 # --- 🧠 SYSTEM MEMORY ---
 LOGIN_FAIL_COUNT = 0
@@ -82,17 +89,11 @@ def send_push(message, title="SmartFind Bot"):
 # 🛡️ RULES & LOGIC
 # ==========================================
 def is_target_school(clean_msg):
-    """
-    Returns True ONLY if the job is at a designated High School, 
-    OR if it is a Middle School Special Ed position.
-    """
     msg_upper = clean_msg.upper()
     
-    # 1. Is it on our High School list?
     if any(hs in msg_upper for hs in TARGET_HIGH_SCHOOLS):
         return True
         
-    # 2. Is it Middle School SP ED?
     if "MIDDLE" in msg_upper and "SP ED" in msg_upper:
         return True
         
@@ -129,7 +130,6 @@ def check_prep_deadline(job_date_str):
         return True
 
 def get_active_dates(page):
-    """Scrapes schedule AND generates blackout dates."""
     print("   ...Checking Schedule for conflicts")
     blocked_dates = set()
     
@@ -355,7 +355,7 @@ def run_check(known_jobs):
                         current_scan_signatures.add(fingerprint)
                         continue
 
-                    # --- NEW STRICT FILTER ---
+                    # --- STRICT FILTER ---
                     if not is_target_school(clean_msg):
                         print(f"      🔸 IGNORED (Not Target HS or MS SP ED): {clean_msg}")
                         current_scan_signatures.add(fingerprint)
@@ -366,36 +366,38 @@ def run_check(known_jobs):
                     fought_and_lost = False 
                     
                     if AUTO_ACCEPT_ENABLED:
-                        is_too_late = check_prep_deadline(job_date_str)
-                        is_safe_time = check_24h_rule(job_date_str)
-                        is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
+                        is_notify_only = job_date_str in NOTIFY_ONLY_DATES
                         
-                        if is_long_enough and not is_too_late and is_safe_time:
-                            
-                            # 🚨 NEW: IMMEDIATE PUSH NOTIFICATION
-                            print(f"   ⚡ Sending immediate notification for combat mode...")
-                            send_push(f"⚡ COMBAT MODE INITIATED:\n{clean_msg}")
-                            
-                            # ⚔️ BEGIN THE FIGHT
-                            success = attempt_auto_accept(page, row, clean_msg)
-                            if success:
-                                send_push(f"🎉 SECURED JOB ({duration}h):\n{clean_msg}")
-                                accepted = True
-                                blocked_dates.add(job_date_str)
-                            else:
-                                send_push(f"⚠️ LOST FIGHT FOR:\n{clean_msg}")
-                                fought_and_lost = True 
+                        if is_notify_only:
+                            print(f"      🔸 Auto-Accept Skipped (Notify-Only Date: {job_date_str})")
                         else:
-                            if not is_safe_time:
-                                print(f"      🔸 Auto-Accept Skipped (24h Rule)")
-                            elif is_too_late:
-                                print(f"      🔸 Auto-Accept Skipped (Too Late to Prepare)")
-                            elif not is_long_enough:
-                                print(f"      🔸 Auto-Accept Skipped (Too Short: {duration}h)")
+                            is_too_late = check_prep_deadline(job_date_str)
+                            is_safe_time = check_24h_rule(job_date_str)
+                            is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
+                            
+                            if is_long_enough and not is_too_late and is_safe_time:
+                                
+                                print(f"   ⚡ Sending immediate notification for combat mode...")
+                                send_push(f"⚡ COMBAT MODE INITIATED:\n{clean_msg}")
+                                
+                                success = attempt_auto_accept(page, row, clean_msg)
+                                if success:
+                                    send_push(f"🎉 SECURED JOB ({duration}h):\n{clean_msg}")
+                                    accepted = True
+                                    blocked_dates.add(job_date_str)
+                                else:
+                                    send_push(f"⚠️ LOST FIGHT FOR:\n{clean_msg}")
+                                    fought_and_lost = True 
+                            else:
+                                if not is_safe_time:
+                                    print(f"      🔸 Auto-Accept Skipped (24h Rule)")
+                                elif is_too_late:
+                                    print(f"      🔸 Auto-Accept Skipped (Too Late to Prepare)")
+                                elif not is_long_enough:
+                                    print(f"      🔸 Auto-Accept Skipped (Too Short: {duration}h)")
                     else:
                         print("      🔸 Auto-Accept Disabled")
 
-                    # Standard notification if it passed the school filter but failed an auto-accept rule
                     if not accepted and not fought_and_lost:
                         if duration >= NOTIFICATION_MIN_HOURS:
                             print(f"   🚨 NEW TARGET LISTING: {clean_msg}")
@@ -416,7 +418,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: STRICT-FILTER | IMMEDIATE-PUSH | AGGRESSIVE-CLICK")
+    print("🤖 Bot Active. FEATURES: NOTIFY-ONLY DATES | 4.5H-MINIMUM | STRICT-FILTER")
     while True:
         run_check(known_jobs)
         time.sleep(60)
