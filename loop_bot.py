@@ -59,7 +59,6 @@ TARGET_HIGH_SCHOOLS = [
 # 5. SETTINGS
 AUTO_ACCEPT_MIN_HOURS = 4.5    # Auto-Accept only if 4.5+ hours
 AUTO_ACCEPT_MAX_HOURS = 9.0    # Ignore jobs longer than 9 hours
-AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
 # 6. NOISE FILTER 🔇
 NOTIFICATION_MIN_HOURS = 4.5   # Only notify if 4.5+ hours
@@ -115,20 +114,6 @@ def check_24h_rule(job_date_str):
     except Exception as e:
         print(f"      ⚠️ Date Parse Error: {e}")
         return False
-
-def check_prep_deadline(job_date_str):
-    try:
-        now = datetime.now()
-        job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
-        day_before = job_dt - timedelta(days=1)
-        cutoff_time = day_before.replace(hour=AUTO_ACCEPT_PREP_CUTOFF, minute=0, second=0, microsecond=0)
-        
-        if now > cutoff_time:
-            return True # Too late
-        else:
-            return False # Safe
-    except Exception:
-        return True
 
 def get_active_dates(page):
     print("   ...Checking Schedule for conflicts")
@@ -378,11 +363,10 @@ def run_check(known_jobs):
                         if is_notify_only:
                             print(f"      🔸 Auto-Accept Skipped (Notify-Only Date: {job_date_str})")
                         else:
-                            is_too_late = check_prep_deadline(job_date_str)
                             is_safe_time = check_24h_rule(job_date_str)
                             is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
                             
-                            if is_long_enough and not is_too_late and is_safe_time:
+                            if is_long_enough and is_safe_time:
                                 
                                 print(f"   ⚡ Sending immediate notification for combat mode...")
                                 send_push(f"⚡ COMBAT MODE INITIATED:\n{clean_msg}")
@@ -398,8 +382,6 @@ def run_check(known_jobs):
                             else:
                                 if not is_safe_time:
                                     print(f"      🔸 Auto-Accept Skipped (24h Rule)")
-                                elif is_too_late:
-                                    print(f"      🔸 Auto-Accept Skipped (Too Late to Prepare)")
                                 elif not is_long_enough:
                                     print(f"      🔸 Auto-Accept Skipped (Too Short: {duration}h)")
                     else:
@@ -425,7 +407,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: MAX 9H | 4.5H-MIN | STRICT-FILTER | IMMEDIATE-PUSH")
+    print("🤖 Bot Active. FEATURES: 24H-RULE ONLY | MAX 9H | 4.5H-MIN | STRICT-FILTER | IMMEDIATE-PUSH")
     while True:
         run_check(known_jobs)
         time.sleep(60)
