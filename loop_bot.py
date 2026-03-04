@@ -58,6 +58,7 @@ TARGET_HIGH_SCHOOLS = [
 
 # 5. SETTINGS
 AUTO_ACCEPT_MIN_HOURS = 4.5    # Auto-Accept only if 4.5+ hours
+AUTO_ACCEPT_MAX_HOURS = 9.0    # Ignore jobs longer than 9 hours
 AUTO_ACCEPT_PREP_CUTOFF = 15   # 3:00 PM (The day before)
 
 # 6. NOISE FILTER 🔇
@@ -355,9 +356,15 @@ def run_check(known_jobs):
                         current_scan_signatures.add(fingerprint)
                         continue
 
-                    # --- STRICT FILTER ---
+                    # --- STRICT SCHOOL FILTER ---
                     if not is_target_school(clean_msg):
                         print(f"      🔸 IGNORED (Not Target HS or MS SP ED): {clean_msg}")
+                        current_scan_signatures.add(fingerprint)
+                        continue
+                        
+                    # --- MAX HOURS FILTER ---
+                    if duration > AUTO_ACCEPT_MAX_HOURS:
+                        print(f"      🔸 IGNORED (Too Long: {duration}h): {clean_msg}")
                         current_scan_signatures.add(fingerprint)
                         continue
 
@@ -418,7 +425,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: NOTIFY-ONLY DATES | 4.5H-MINIMUM | STRICT-FILTER")
+    print("🤖 Bot Active. FEATURES: MAX 9H | 4.5H-MIN | STRICT-FILTER | IMMEDIATE-PUSH")
     while True:
         run_check(known_jobs)
         time.sleep(60)
