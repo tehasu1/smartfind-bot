@@ -27,9 +27,12 @@ ENABLE_24H_RULE = True   # Set to False if you want to pick up last-minute shift
 
 # 3. HARD BLACKOUT SETTINGS 🚫 (Ignored entirely)
 MANUAL_BLACKOUT_DATES = [
-    # BLOCK 1: March 21 - March 29
+    # BLOCK 1: March 21 - April 10 (Combined Break/Unavailable)
     "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
-    "03/26/2026", "03/27/2026", "03/28/2026", "03/29/2026",
+    "03/26/2026", "03/27/2026", "03/28/2026", "03/29/2026", "03/30/2026", 
+    "03/31/2026", "04/01/2026", "04/02/2026", "04/03/2026", "04/04/2026", 
+    "04/05/2026", "04/06/2026", "04/07/2026", "04/08/2026", "04/09/2026", 
+    "04/10/2026",
     
     # BLOCK 2: April 30 - May 10
     "04/30/2026", 
@@ -39,12 +42,8 @@ MANUAL_BLACKOUT_DATES = [
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
 
-# 3.5 NOTIFY-ONLY DATES ⚠️ (No Combat, but sends Push)
-NOTIFY_ONLY_DATES = [
-    "03/30/2026", "03/31/2026", "04/01/2026", "04/02/2026", "04/03/2026", 
-    "04/04/2026", "04/05/2026", "04/06/2026", "04/07/2026", "04/08/2026", 
-    "04/09/2026", "04/10/2026"
-]
+# 3.5 NOTIFY-ONLY DATES ⚠️ (Currently Empty)
+NOTIFY_ONLY_DATES = []
 
 # 4. STRICT TARGET SCHOOLS 🎯
 TARGET_HIGH_SCHOOLS = [
