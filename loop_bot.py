@@ -23,9 +23,9 @@ PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 AUTO_ACCEPT_ENABLED = True 
 
 # 2. SAFETY SWITCHES 🛡️
-ENABLE_24H_RULE = True   # Set to False if you want to pick up last-minute shifts
+ENABLE_24H_RULE = True   
 
-# 3. HARD BLACKOUT SETTINGS 🚫 (Ignored entirely)
+# 3. HARD BLACKOUT SETTINGS 🚫
 MANUAL_BLACKOUT_DATES = [
     # BLOCK 1: March 21 - April 10
     "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
@@ -56,11 +56,11 @@ TARGET_HIGH_SCHOOLS = [
 ]
 
 # 5. SETTINGS
-AUTO_ACCEPT_MIN_HOURS = 4.5    # Auto-Accept only if 4.5+ hours
-AUTO_ACCEPT_MAX_HOURS = 9.0    # Ignore jobs longer than 9 hours
+AUTO_ACCEPT_MIN_HOURS = 4.5    
+AUTO_ACCEPT_MAX_HOURS = 9.0    
 
 # 6. NOISE FILTER 🔇
-NOTIFICATION_MIN_HOURS = 4.5   # Only notify if 4.5+ hours
+NOTIFICATION_MIN_HOURS = 4.5   
 
 # --- 🧠 SYSTEM MEMORY ---
 LOGIN_FAIL_COUNT = 0
@@ -89,48 +89,30 @@ def send_push(message, title="SmartFind Bot"):
 # ==========================================
 def is_target_school(clean_msg):
     msg_upper = clean_msg.upper()
-    
     if any(hs in msg_upper for hs in TARGET_HIGH_SCHOOLS):
         return True
-        
     if "MIDDLE" in msg_upper and "SP ED" in msg_upper:
         return True
-        
     return False
 
 def check_24h_rule(job_date_str):
     if not ENABLE_24H_RULE:
         return True 
-
     try:
         job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
         now_pst = datetime.utcnow() - timedelta(hours=8)
-        
         if (job_dt - now_pst).total_seconds() < 86400:
             print(f"      🛑 24H RULE: Job on {job_date_str} starts too soon (<24h).")
             return False
         return True 
     except Exception as e:
-        print(f"      ⚠️ Date Parse Error: {e}")
         return False
 
 def get_active_dates(page):
     print("   ...Checking Schedule for conflicts")
     blocked_dates = set()
-    
     for date in MANUAL_BLACKOUT_DATES:
         blocked_dates.add(date)
-
-    if BLACKOUT_RANGE_START and BLACKOUT_RANGE_END:
-        try:
-            start = datetime.strptime(BLACKOUT_RANGE_START, "%m/%d/%Y")
-            end = datetime.strptime(BLACKOUT_RANGE_END, "%m/%d/%Y")
-            delta = end - start
-            for i in range(delta.days + 1):
-                day = start + timedelta(days=i)
-                blocked_dates.add(day.strftime("%m/%d/%Y"))
-        except ValueError:
-            print("   ⚠️ Error: Check Blackout Date formats")
 
     try:
         page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/active", wait_until="networkidle")
@@ -140,8 +122,7 @@ def get_active_dates(page):
         for date in found_dates:
             blocked_dates.add(date)
     except Exception as e:
-        print(f"   ⚠️ Could not load schedule: {e}")
-        
+        pass
     return blocked_dates
 
 # ==========================================
@@ -149,35 +130,39 @@ def get_active_dates(page):
 # ==========================================
 def attempt_auto_accept(page, row_element, job_details):
     print(f"   ⚔️ ENGAGING COMBAT MODE (4 Minutes)...")
+    
+    # 🚨 X-RAY VISION: Dump the raw HTML of the job row so we can see the buttons
+    try:
+        raw_html = row_element.inner_html()
+        print(f"\n--- 🔎 X-RAY DEBUG HTML ---\n{raw_html}\n---------------------------\n")
+    except:
+        print("   ⚠️ X-Ray failed to grab HTML.")
+
     max_attempts = 500 
     attempt_count = 0
     
     while attempt_count < max_attempts:
         attempt_count += 1
         
-        # 1. Victory Check
         if not row_element.is_visible():
             print("      ✨ The job row is gone. Assuming success.")
             return True
 
-        # 2. Aggressive ACCEPT Click
+        # 🚨 UPGRADED ATTACK: Look for Accept, Select, or Details
         try:
-            # Look for ANY element containing "Accept" (case insensitive) and force click it
-            accept_target = row_element.locator("a, button, input").filter(has_text=re.compile(r"Accept", re.IGNORECASE))
+            accept_target = row_element.locator("a, button, input").filter(has_text=re.compile(r"Accept|Select|Details", re.IGNORECASE))
             if accept_target.count() > 0:
                 accept_target.first.click(timeout=500, force=True)
             else:
-                # Fallback: Check for an input tag where the VALUE is "Accept"
-                val_target = row_element.locator("input[value*='Accept' i]")
+                val_target = row_element.locator("input[value*='Accept' i], input[value*='Select' i], input[value*='Details' i]")
                 if val_target.count() > 0:
                     val_target.first.click(timeout=500, force=True)
                 else:
-                    # Last resort: blindly click whatever interactive element is in the last column
+                    # Blindly click the last interactive element in the row
                     row_element.locator("td").last.locator("a, button, input, i").first.click(timeout=500, force=True)
         except:
             pass 
 
-        # 3. Aggressive CONFIRM Click
         try:
             confirm_target = page.locator("a, button, input").filter(has_text=re.compile(r"Confirm", re.IGNORECASE))
             if confirm_target.count() > 0:
@@ -191,7 +176,6 @@ def attempt_auto_accept(page, row_element, job_details):
         except:
             pass
         
-        # 4. Handle Red Error Banner
         try:
             if page.locator("div:has-text('substitute called by the system')").is_visible():
                 time.sleep(1)
@@ -282,7 +266,6 @@ def run_check(known_jobs):
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
 
-        # 🚨 NEW CRITICAL FIX: Automatically click "OK" on any Javascript popups that ask "Are you sure?"
         page.on("dialog", lambda dialog: dialog.accept())
         
         try:
@@ -364,13 +347,11 @@ def run_check(known_jobs):
                         current_scan_signatures.add(fingerprint)
                         continue
 
-                    # --- STRICT SCHOOL FILTER ---
                     if not is_target_school(clean_msg):
                         print(f"      🔸 IGNORED (Not Target): {clean_msg}")
                         current_scan_signatures.add(fingerprint)
                         continue
                         
-                    # --- MAX HOURS FILTER ---
                     if duration > AUTO_ACCEPT_MAX_HOURS:
                         print(f"      🔸 IGNORED (Too Long: {duration}h): {clean_msg}")
                         current_scan_signatures.add(fingerprint)
@@ -430,7 +411,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: POPUP-KILLER | FORCE-CLICKS | AM/PM FIX | 4.5H-MIN")
+    print("🤖 Bot Active. FEATURES: X-RAY VISION | BROAD-CLICKER")
     while True:
         run_check(known_jobs)
         time.sleep(60)
