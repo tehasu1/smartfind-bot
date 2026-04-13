@@ -129,62 +129,43 @@ def get_active_dates(page):
 # 🤖 BROWSER ACTIONS
 # ==========================================
 def attempt_auto_accept(page, row_element, job_details):
-    print(f"   ⚔️ ENGAGING COMBAT MODE (4 Minutes)...")
+    print(f"   ⚔️ ENGAGING COMBAT MODE...")
     
-    # 🚨 X-RAY VISION: Dump the raw HTML of the job row so we can see the buttons
+    # 1. Target the Green Checkmark Icon (Last Column)
     try:
-        raw_html = row_element.inner_html()
-        print(f"\n--- 🔎 X-RAY DEBUG HTML ---\n{raw_html}\n---------------------------\n")
-    except:
-        print("   ⚠️ X-Ray failed to grab HTML.")
-
-    max_attempts = 500 
-    attempt_count = 0
-    
-    while attempt_count < max_attempts:
-        attempt_count += 1
+        print("      👉 Targeting the Accept icon in the final column...")
+        accept_cell = row_element.locator("td").last
+        icon = accept_cell.locator("svg, i, span, img, a, button").first
         
+        if icon.is_visible():
+            icon.click(force=True, timeout=2000)
+        else:
+            accept_cell.click(force=True, timeout=2000)
+    except Exception as e:
+        print("      ⚠️ Failed to click the Accept column.")
+        return False
+
+    # 2. Wait for the Custom Modal and Click Confirm
+    try:
+        print("      ⏳ Waiting for the Confirmation Modal...")
+        confirm_btn = page.locator("button:has-text('Confirm')").first
+        # Wait up to 5 seconds for the modal to slide in
+        confirm_btn.wait_for(state="visible", timeout=5000) 
+        print("      👉 Clicking Confirm...")
+        confirm_btn.click(force=True)
+    except Exception as e:
+        print("      ⚠️ Modal did not appear. Did someone else grab it faster?")
+        return False
+
+    # 3. The Patience Window (Stop clicking, just wait for server)
+    print("      🧘 Waiting patiently for the server to process (up to 30s)...")
+    for _ in range(30):
         if not row_element.is_visible():
-            print("      ✨ The job row is gone. Assuming success.")
+            print("      ✨ SUCCESS! The job row disappeared. It's yours.")
             return True
+        time.sleep(1)
 
-        # 🚨 UPGRADED ATTACK: Look for Accept, Select, or Details
-        try:
-            accept_target = row_element.locator("a, button, input").filter(has_text=re.compile(r"Accept|Select|Details", re.IGNORECASE))
-            if accept_target.count() > 0:
-                accept_target.first.click(timeout=500, force=True)
-            else:
-                val_target = row_element.locator("input[value*='Accept' i], input[value*='Select' i], input[value*='Details' i]")
-                if val_target.count() > 0:
-                    val_target.first.click(timeout=500, force=True)
-                else:
-                    # Blindly click the last interactive element in the row
-                    row_element.locator("td").last.locator("a, button, input, i").first.click(timeout=500, force=True)
-        except:
-            pass 
-
-        try:
-            confirm_target = page.locator("a, button, input").filter(has_text=re.compile(r"Confirm", re.IGNORECASE))
-            if confirm_target.count() > 0:
-                confirm_target.first.click(timeout=500, force=True)
-                print("      ✅ Clicked Confirm!")
-            else:
-                val_confirm = page.locator("input[value*='Confirm' i]")
-                if val_confirm.count() > 0:
-                    val_confirm.first.click(timeout=500, force=True)
-                    print("      ✅ Clicked Confirm (input)!")
-        except:
-            pass
-        
-        try:
-            if page.locator("div:has-text('substitute called by the system')").is_visible():
-                time.sleep(1)
-                continue 
-        except:
-            pass
-            
-        time.sleep(0.3)
-        
+    print("      ❌ The job row never disappeared. We may have lost it.")
     return False
 
 def parse_row_to_clean_string(row_element):
@@ -265,8 +246,6 @@ def run_check(known_jobs):
         )
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
-
-        page.on("dialog", lambda dialog: dialog.accept())
         
         try:
             # 1. LOGIN
@@ -411,7 +390,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: X-RAY VISION | BROAD-CLICKER")
+    print("🤖 Bot Active. FEATURES: VISUAL-ICON-TARGETING | MODAL-WAIT | 30S-PATIENCE")
     while True:
         run_check(known_jobs)
         time.sleep(60)
