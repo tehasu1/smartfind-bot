@@ -27,7 +27,7 @@ ENABLE_24H_RULE = True   # Set to False if you want to pick up last-minute shift
 
 # 3. HARD BLACKOUT SETTINGS 🚫 (Ignored entirely)
 MANUAL_BLACKOUT_DATES = [
-    # BLOCK 1: March 21 - April 10 (Combined Break/Unavailable)
+    # BLOCK 1: March 21 - April 10
     "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
     "03/26/2026", "03/27/2026", "03/28/2026", "03/29/2026", "03/30/2026", 
     "03/31/2026", "04/01/2026", "04/02/2026", "04/03/2026", "04/04/2026", 
@@ -42,17 +42,17 @@ MANUAL_BLACKOUT_DATES = [
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
 
-# 3.5 NOTIFY-ONLY DATES ⚠️ (Currently Empty)
+# 3.5 NOTIFY-ONLY DATES ⚠️
 NOTIFY_ONLY_DATES = []
 
 # 4. STRICT TARGET SCHOOLS 🎯
 TARGET_HIGH_SCHOOLS = [
-    "EL CERRITO HIGH",
-    "RICHMOND HIGH SCHOOL",
-    "PINOLE HIGH SCHOOL",
-    "KENNEDY HIGH",
-    "DE ANZA HIGH",
-    "HERCULES HIGH SCHOOL"
+    "EL CERRITO",
+    "RICHMOND HIGH",
+    "PINOLE",
+    "KENNEDY",
+    "DE ANZA",
+    "HERCULES HIGH"
 ]
 
 # 5. SETTINGS
@@ -155,26 +155,43 @@ def attempt_auto_accept(page, row_element, job_details):
     while attempt_count < max_attempts:
         attempt_count += 1
         
+        # 1. Victory Check
         if not row_element.is_visible():
             print("      ✨ The job row is gone. Assuming success.")
             return True
 
+        # 2. Aggressive ACCEPT Click
         try:
-            page.locator("a:has-text('Accept'), button:has-text('Accept')").first.click(timeout=500)
+            # Look for ANY element containing "Accept" (case insensitive) and force click it
+            accept_target = row_element.locator("a, button, input").filter(has_text=re.compile(r"Accept", re.IGNORECASE))
+            if accept_target.count() > 0:
+                accept_target.first.click(timeout=500, force=True)
+            else:
+                # Fallback: Check for an input tag where the VALUE is "Accept"
+                val_target = row_element.locator("input[value*='Accept' i]")
+                if val_target.count() > 0:
+                    val_target.first.click(timeout=500, force=True)
+                else:
+                    # Last resort: blindly click whatever interactive element is in the last column
+                    row_element.locator("td").last.locator("a, button, input, i").first.click(timeout=500, force=True)
         except:
-            try:
-                row_element.locator("td").last.locator("a, button, i").first.click(timeout=500)
-            except:
-                pass 
+            pass 
 
+        # 3. Aggressive CONFIRM Click
         try:
-            confirm_btn = page.locator("button:has-text('Confirm')")
-            if confirm_btn.is_visible():
-                confirm_btn.click(timeout=500)
+            confirm_target = page.locator("a, button, input").filter(has_text=re.compile(r"Confirm", re.IGNORECASE))
+            if confirm_target.count() > 0:
+                confirm_target.first.click(timeout=500, force=True)
                 print("      ✅ Clicked Confirm!")
+            else:
+                val_confirm = page.locator("input[value*='Confirm' i]")
+                if val_confirm.count() > 0:
+                    val_confirm.first.click(timeout=500, force=True)
+                    print("      ✅ Clicked Confirm (input)!")
         except:
             pass
         
+        # 4. Handle Red Error Banner
         try:
             if page.locator("div:has-text('substitute called by the system')").is_visible():
                 time.sleep(1)
@@ -198,17 +215,21 @@ def parse_row_to_clean_string(row_element):
     date_match = re.search(r'\d{2}/\d{2}/\d{4}', full_string)
     date_str = date_match.group(0) if date_match else "Unknown"
 
-    time_matches = re.findall(r'\d{1,2}:\d{2}\s?[AP]M', full_string)
+    time_matches = re.findall(r'\d{1,2}:\d{2}\s?[aApP][mM]', full_string)
     time_display = ""
     duration = 0.0
 
     if len(time_matches) >= 2:
         try:
             fmt = "%I:%M %p"
-            t1 = datetime.strptime(time_matches[0], fmt)
-            t2 = datetime.strptime(time_matches[1], fmt)
+            t1 = datetime.strptime(time_matches[0].strip().upper(), fmt)
+            t2 = datetime.strptime(time_matches[-1].strip().upper(), fmt)
+            
             duration = (t2 - t1).total_seconds() / 3600.0
-            time_display = f"{time_matches[0]} - {time_matches[1]}"
+            if duration < 0: 
+                duration += 24.0
+                
+            time_display = f"{time_matches[0].strip()} - {time_matches[-1].strip()}"
         except:
             duration = 0.0
     elif len(time_matches) == 1:
@@ -260,6 +281,9 @@ def run_check(known_jobs):
         )
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
+
+        # 🚨 NEW CRITICAL FIX: Automatically click "OK" on any Javascript popups that ask "Are you sure?"
+        page.on("dialog", lambda dialog: dialog.accept())
         
         try:
             # 1. LOGIN
@@ -342,7 +366,7 @@ def run_check(known_jobs):
 
                     # --- STRICT SCHOOL FILTER ---
                     if not is_target_school(clean_msg):
-                        print(f"      🔸 IGNORED (Not Target HS or MS SP ED): {clean_msg}")
+                        print(f"      🔸 IGNORED (Not Target): {clean_msg}")
                         current_scan_signatures.add(fingerprint)
                         continue
                         
@@ -406,7 +430,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: 24H-RULE ONLY | MAX 9H | 4.5H-MIN | STRICT-FILTER | IMMEDIATE-PUSH")
+    print("🤖 Bot Active. FEATURES: POPUP-KILLER | FORCE-CLICKS | AM/PM FIX | 4.5H-MIN")
     while True:
         run_check(known_jobs)
         time.sleep(60)
