@@ -18,19 +18,34 @@ PUSHOVER_USER = os.getenv("PUSHOVER_USER")
 PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 
 # --- 🎛️ CONTROL PANEL ---
+
+# 1. MASTER SWITCH
 AUTO_ACCEPT_ENABLED = True 
+
+# 2. SAFETY SWITCHES 🛡️
 ENABLE_24H_RULE = True   
 
+# 3. HARD BLACKOUT SETTINGS 🚫
 MANUAL_BLACKOUT_DATES = [
-    # April 30 - May 10
+    # BLOCK 1: March 21 - April 10
+    "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
+    "03/26/2026", "03/27/2026", "03/28/2026", "03/29/2026", "03/30/2026", 
+    "03/31/2026", "04/01/2026", "04/02/2026", "04/03/2026", "04/04/2026", 
+    "04/05/2026", "04/06/2026", "04/07/2026", "04/08/2026", "04/09/2026", 
+    "04/10/2026",
+    
+    # BLOCK 2: April 30 - May 10
     "04/30/2026", 
     "05/01/2026", "05/02/2026", "05/03/2026", "05/04/2026", "05/05/2026",
     "05/06/2026", "05/07/2026", "05/08/2026", "05/09/2026", "05/10/2026"
 ]
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
+
+# 3.5 NOTIFY-ONLY DATES ⚠️
 NOTIFY_ONLY_DATES = []
 
+# 4. STRICT TARGET SCHOOLS 🎯
 TARGET_HIGH_SCHOOLS = [
     "EL CERRITO",
     "RICHMOND HIGH",
@@ -40,10 +55,14 @@ TARGET_HIGH_SCHOOLS = [
     "HERCULES HIGH"
 ]
 
+# 5. SETTINGS
 AUTO_ACCEPT_MIN_HOURS = 4.5    
 AUTO_ACCEPT_MAX_HOURS = 9.0    
+
+# 6. NOISE FILTER 🔇
 NOTIFICATION_MIN_HOURS = 4.5   
 
+# --- 🧠 SYSTEM MEMORY ---
 LOGIN_FAIL_COUNT = 0
 LAST_HEARTBEAT_DATE = None
 
@@ -83,15 +102,18 @@ def check_24h_rule(job_date_str):
         job_dt = datetime.strptime(job_date_str, "%m/%d/%Y")
         now_pst = datetime.utcnow() - timedelta(hours=8)
         if (job_dt - now_pst).total_seconds() < 86400:
+            print(f"      🛑 24H RULE: Job on {job_date_str} starts too soon (<24h).")
             return False
         return True 
-    except:
+    except Exception as e:
         return False
 
 def get_active_dates(page):
+    print("   ...Checking Schedule for conflicts")
     blocked_dates = set()
     for date in MANUAL_BLACKOUT_DATES:
         blocked_dates.add(date)
+
     try:
         page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/active", wait_until="networkidle")
         time.sleep(3)
@@ -99,7 +121,7 @@ def get_active_dates(page):
         found_dates = re.findall(r'\d{2}/\d{2}/\d{4}', content)
         for date in found_dates:
             blocked_dates.add(date)
-    except:
+    except Exception as e:
         pass
     return blocked_dates
 
@@ -107,71 +129,62 @@ def get_active_dates(page):
 # 🤖 BROWSER ACTIONS
 # ==========================================
 def attempt_auto_accept(page, row_element, job_details):
-    print(f"   ⚔️ ENGAGING COMBAT MODE...")
+    print(f"   ⚔️ ENGAGING COMBAT MODE (Persistent Sniper)...")
     
-    # SAFETY NET KEEPS THE BOT FROM CRASHING SILENTLY
-    try:
-        max_loops = 15 # ~45 seconds of fighting
-        loop_count = 0
+    max_loops = 30 # Will try for about 2 minutes total
+    loop_count = 0
+    
+    while loop_count < max_loops:
+        loop_count += 1
         
-        while loop_count < max_loops:
-            loop_count += 1
+        if not row_element.is_visible():
+            print("      ✨ The job row is gone. Assuming success or someone else took it.")
+            return True
+
+        # 1. Target the Green Checkmark Icon (Last Column)
+        try:
+            print(f"      👉 [Attempt {loop_count}] Clicking Accept icon...")
+            accept_cell = row_element.locator("td").last
+            icon = accept_cell.locator("svg, i, span, img, a, button").first
             
-            # 1. RESTORED PROVEN CLICK LOGIC: Target the Icon specifically
-            try:
-                print(f"      👉 [Attempt {loop_count}] Clicking Accept icon...")
-                accept_cell = row_element.locator("td").last
-                icon = accept_cell.locator("svg, i, span, img, a, button").first
-                
-                if icon.is_visible():
-                    icon.click(force=True, timeout=2000)
-                else:
-                    accept_cell.click(force=True, timeout=2000)
-            except Exception as e:
-                print("      ⚠️ Failed to click the Accept column. Retrying...")
+            if icon.is_visible():
+                icon.click(force=True, timeout=2000)
+            else:
+                accept_cell.click(force=True, timeout=2000)
+        except Exception as e:
+            print("      ⚠️ Failed to click the Accept column.")
+            time.sleep(1)
+            continue
+
+        # 2. Wait for the Custom Modal to appear
+        try:
+            print("      ⏳ Checking for Confirm Modal...")
+            confirm_btn = page.locator("button:has-text('Confirm')").first
+            # Wait up to 3 seconds for the modal. 
+            # If "Under Review" blocked it, this will timeout and drop to the 'except' block.
+            confirm_btn.wait_for(state="visible", timeout=3000) 
+            
+            print("      👉 Modal found! Clicking Confirm...")
+            confirm_btn.click(force=True)
+            
+            # 3. The Patience Window (Stop clicking, just wait for server)
+            print("      🧘 Waiting patiently for the server to process (up to 30s)...")
+            for _ in range(30):
+                if not row_element.is_visible():
+                    print("      ✨ SUCCESS! The job row disappeared. It's yours.")
+                    return True
                 time.sleep(1)
-                continue
 
-            # 2. Wait for the Custom Modal to appear
-            try:
-                print("      ⏳ Checking for Confirm Modal...")
-                confirm_btn = page.locator("button:has-text('Confirm')").first
-                confirm_btn.wait_for(state="visible", timeout=3000) 
-                
-                print("      👉 Modal found! Clicking Confirm...")
-                confirm_btn.click(force=True)
-                
-                # 3. Smarter Victory Detection
-                print("      🧘 Waiting for server success banner (up to 20s)...")
-                for _ in range(20):
-                    try:
-                        page_text = page.locator("body").inner_text().lower()
-                        if "success" in page_text or "successfully accepted" in page_text or "job number" in page_text:
-                            print("      ✨ SUCCESS! Found confirmation message on page.")
-                            return "WON"
-                    except:
-                        pass
-                    
-                    if not row_element.is_visible():
-                        print("      ✨ SUCCESS! The job row disappeared.")
-                        return "WON"
-                        
-                    time.sleep(1)
+            print("      ❌ The job row never disappeared after confirming.")
+            return False
+            
+        except Exception as e:
+            print("      ⚠️ Modal blocked (Job likely 'Under Review'). Retrying...")
+            time.sleep(1) # Breathe for a second before clicking checkmark again
+            continue
 
-                print("      ❌ The job row never disappeared.")
-                return "LOST"
-                
-            except Exception as e:
-                print("      ⚠️ Modal blocked (Job likely 'Under Review'). Retrying loop...")
-                time.sleep(1) 
-                continue
-
-        print("      ❌ Max attempts reached. The job is permanently gone or locked.")
-        return "LOST"
-
-    except Exception as fatal_error:
-        print(f"      🔴 FATAL COMBAT CRASH: {fatal_error}")
-        return f"CRASH: {fatal_error}"
+    print("      ❌ Max attempts reached. The job is permanently gone or locked.")
+    return False
 
 def parse_row_to_clean_string(row_element):
     if not row_element.is_visible(): return None, None, 0
@@ -198,7 +211,8 @@ def parse_row_to_clean_string(row_element):
             duration = (t2 - t1).total_seconds() / 3600.0
             if duration < 0: 
                 duration += 24.0
-                time_display = f"{time_matches[0].strip()} - {time_matches[-1].strip()}"
+                
+            time_display = f"{time_matches[0].strip()} - {time_matches[-1].strip()}"
         except:
             duration = 0.0
     elif len(time_matches) == 1:
@@ -250,9 +264,13 @@ def run_check(known_jobs):
         )
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
+        
+        # Keep our popup killer active just in case
         page.on("dialog", lambda dialog: dialog.accept())
         
         try:
+            # 1. LOGIN
+            print("   ...Logging in")
             page.goto("https://westcontracosta.eschoolsolutions.com/logOnInitAction.do", wait_until="networkidle")
             
             login_success = False
@@ -262,6 +280,9 @@ def run_check(known_jobs):
                 page.locator("#userPin").press("Enter")
                 login_success = True
             except:
+                pass
+            
+            if not login_success:
                 for frame in page.frames:
                     try:
                         frame.locator("#userId").fill(SF_USERNAME, timeout=1000)
@@ -272,26 +293,35 @@ def run_check(known_jobs):
                     except:
                         continue
             
-            if not login_success:
+            if login_success:
+                if LOGIN_FAIL_COUNT > 0:
+                    print(f"   ✅ Login recovered! (Previously failed {LOGIN_FAIL_COUNT} times)")
+                LOGIN_FAIL_COUNT = 0
+            else:
                 LOGIN_FAIL_COUNT += 1
+                print(f"   ⚠️ Login Failed! (Attempt {LOGIN_FAIL_COUNT}/5)")
                 if LOGIN_FAIL_COUNT >= 5:
                     send_push("🔴 CRITICAL: Bot cannot login (5 failures). Check password or site.", title="Login Error")
                     LOGIN_FAIL_COUNT = 0 
                 return 
 
-            LOGIN_FAIL_COUNT = 0
             page.wait_for_load_state("networkidle")
             time.sleep(5) 
 
+            # 2. GET BLOCKED DATES
             blocked_dates = get_active_dates(page)
 
+            # 3. GO TO AVAILABLE JOBS
+            print("   ...Checking Available Jobs")
             page.goto("https://westcontracosta.eschoolsolutions.com/ui/#/substitute/jobs/available", wait_until="networkidle")
             time.sleep(8)
 
             if "there are no jobs available" in page.locator("body").inner_text().lower():
+                print("   ✅ Clean scan (No jobs visible).")
                 known_jobs.clear()
                 return
 
+            print("   👀 Jobs detected. Analyzing...")
             new_jobs_found = []
             current_scan_signatures = set()
             rows = page.locator("tr").all()
@@ -302,11 +332,13 @@ def run_check(known_jobs):
                     fingerprint = clean_msg
                     
                     if job_date_str in blocked_dates:
+                        print(f"      🔸 IGNORED (Conflict/Blackout): {clean_msg}")
                         continue
                         
                     try:
                         job_dt_check = datetime.strptime(job_date_str, "%m/%d/%Y")
                         if job_dt_check.weekday() == 1:
+                            print(f"      🔸 IGNORED (Tuesday Blackout): {clean_msg}")
                             continue
                     except:
                         pass
@@ -316,40 +348,52 @@ def run_check(known_jobs):
                         continue
 
                     if not is_target_school(clean_msg):
+                        print(f"      🔸 IGNORED (Not Target): {clean_msg}")
                         current_scan_signatures.add(fingerprint)
                         continue
                         
                     if duration > AUTO_ACCEPT_MAX_HOURS:
+                        print(f"      🔸 IGNORED (Too Long: {duration}h): {clean_msg}")
                         current_scan_signatures.add(fingerprint)
                         continue
 
+                    # --- ⚡ AUTO-ACCEPT LOGIC ---
                     accepted = False
                     fought_and_lost = False 
                     
                     if AUTO_ACCEPT_ENABLED:
                         is_notify_only = job_date_str in NOTIFY_ONLY_DATES
-                        if not is_notify_only:
+                        
+                        if is_notify_only:
+                            print(f"      🔸 Auto-Accept Skipped (Notify-Only Date: {job_date_str})")
+                        else:
                             is_safe_time = check_24h_rule(job_date_str)
                             is_long_enough = duration >= AUTO_ACCEPT_MIN_HOURS
                             
                             if is_long_enough and is_safe_time:
+                                
+                                print(f"   ⚡ Sending immediate notification for combat mode...")
                                 send_push(f"⚡ COMBAT MODE INITIATED:\n{clean_msg}")
                                 
-                                result = attempt_auto_accept(page, row, clean_msg)
-                                
-                                if result == "WON":
+                                success = attempt_auto_accept(page, row, clean_msg)
+                                if success:
                                     send_push(f"🎉 SECURED JOB ({duration}h):\n{clean_msg}")
                                     accepted = True
                                     blocked_dates.add(job_date_str)
-                                elif result == "LOST":
+                                else:
                                     send_push(f"⚠️ LOST FIGHT FOR:\n{clean_msg}")
                                     fought_and_lost = True 
-                                else:
-                                    send_push(f"🔴 COMBAT CRASHED:\n{clean_msg}\n{result}")
-                                    fought_and_lost = True
+                            else:
+                                if not is_safe_time:
+                                    print(f"      🔸 Auto-Accept Skipped (24h Rule)")
+                                elif not is_long_enough:
+                                    print(f"      🔸 Auto-Accept Skipped (Too Short: {duration}h)")
+                    else:
+                        print("      🔸 Auto-Accept Disabled")
 
                     if not accepted and not fought_and_lost:
                         if duration >= NOTIFICATION_MIN_HOURS:
+                            print(f"   🚨 NEW TARGET LISTING: {clean_msg}")
                             new_jobs_found.append(clean_msg)
                         current_scan_signatures.add(fingerprint)
 
@@ -360,14 +404,14 @@ def run_check(known_jobs):
                 send_push(msg)
                 known_jobs.update(current_scan_signatures)
 
-        except Exception as global_error:
-            print(f"❌ Global Error: {global_error}")
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
         finally:
             browser.close()
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: PROVEN-ICON-CLICK | CRASH-REPORTER")
+    print("🤖 Bot Active. FEATURES: VISUAL-ICON-TARGETING | PERSISTENT-RETRY-LOOP")
     while True:
         run_check(known_jobs)
         time.sleep(60)
