@@ -27,14 +27,7 @@ ENABLE_24H_RULE = True
 
 # 3. HARD BLACKOUT SETTINGS 🚫
 MANUAL_BLACKOUT_DATES = [
-    # BLOCK 1: March 21 - April 10
-    "03/21/2026", "03/22/2026", "03/23/2026", "03/24/2026", "03/25/2026",
-    "03/26/2026", "03/27/2026", "03/28/2026", "03/29/2026", "03/30/2026", 
-    "03/31/2026", "04/01/2026", "04/02/2026", "04/03/2026", "04/04/2026", 
-    "04/05/2026", "04/06/2026", "04/07/2026", "04/08/2026", "04/09/2026", 
-    "04/10/2026",
-    
-    # BLOCK 2: April 30 - May 10
+    # April 30 - May 10
     "04/30/2026", 
     "05/01/2026", "05/02/2026", "05/03/2026", "05/04/2026", "05/05/2026",
     "05/06/2026", "05/07/2026", "05/08/2026", "05/09/2026", "05/10/2026"
@@ -129,43 +122,67 @@ def get_active_dates(page):
 # 🤖 BROWSER ACTIONS
 # ==========================================
 def attempt_auto_accept(page, row_element, job_details):
-    print(f"   ⚔️ ENGAGING COMBAT MODE...")
+    print(f"   ⚔️ ENGAGING COMBAT MODE (Persistent Sniper)...")
     
-    # 1. Target the Green Checkmark Icon (Last Column)
-    try:
-        print("      👉 Targeting the Accept icon in the final column...")
-        accept_cell = row_element.locator("td").last
-        icon = accept_cell.locator("svg, i, span, img, a, button").first
+    max_loops = 30 # Will try for about 2 minutes total
+    loop_count = 0
+    
+    while loop_count < max_loops:
+        loop_count += 1
         
-        if icon.is_visible():
-            icon.click(force=True, timeout=2000)
-        else:
-            accept_cell.click(force=True, timeout=2000)
-    except Exception as e:
-        print("      ⚠️ Failed to click the Accept column.")
-        return False
+        # 1. Target the Green Checkmark Icon (Last Column)
+        try:
+            print(f"      👉 [Attempt {loop_count}] Clicking Accept icon...")
+            accept_cell = row_element.locator("td").last
+            icon = accept_cell.locator("svg, i, span, img, a, button").first
+            
+            if icon.is_visible():
+                icon.click(force=True, timeout=2000)
+            else:
+                accept_cell.click(force=True, timeout=2000)
+        except Exception as e:
+            print("      ⚠️ Failed to click the Accept column.")
+            time.sleep(1)
+            continue
 
-    # 2. Wait for the Custom Modal and Click Confirm
-    try:
-        print("      ⏳ Waiting for the Confirmation Modal...")
-        confirm_btn = page.locator("button:has-text('Confirm')").first
-        # Wait up to 5 seconds for the modal to slide in
-        confirm_btn.wait_for(state="visible", timeout=5000) 
-        print("      👉 Clicking Confirm...")
-        confirm_btn.click(force=True)
-    except Exception as e:
-        print("      ⚠️ Modal did not appear. Did someone else grab it faster?")
-        return False
+        # 2. Wait for the Custom Modal to appear
+        try:
+            print("      ⏳ Checking for Confirm Modal...")
+            confirm_btn = page.locator("button:has-text('Confirm')").first
+            # Wait up to 3 seconds for the modal. 
+            confirm_btn.wait_for(state="visible", timeout=3000) 
+            
+            print("      👉 Modal found! Clicking Confirm...")
+            confirm_btn.click(force=True)
+            
+            # 3. Smarter Victory Detection
+            print("      🧘 Waiting patiently for the server to process (up to 30s)...")
+            for _ in range(30):
+                # Check for success messages anywhere on the page
+                try:
+                    page_text = page.locator("body").inner_text().lower()
+                    if "success" in page_text or "successfully accepted" in page_text or "job number" in page_text:
+                        print("      ✨ SUCCESS! Found confirmation message on page.")
+                        return True
+                except:
+                    pass
+                
+                # Check if the row disappeared or changed significantly
+                if not row_element.is_visible():
+                    print("      ✨ SUCCESS! The job row disappeared.")
+                    return True
+                    
+                time.sleep(1)
 
-    # 3. The Patience Window (Stop clicking, just wait for server)
-    print("      🧘 Waiting patiently for the server to process (up to 30s)...")
-    for _ in range(30):
-        if not row_element.is_visible():
-            print("      ✨ SUCCESS! The job row disappeared. It's yours.")
-            return True
-        time.sleep(1)
+            print("      ❌ The job row never disappeared and no success message found.")
+            return False
+            
+        except Exception as e:
+            print("      ⚠️ Modal blocked (Job likely 'Under Review'). Retrying...")
+            time.sleep(1) 
+            continue
 
-    print("      ❌ The job row never disappeared. We may have lost it.")
+    print("      ❌ Max attempts reached. The job is permanently gone or locked.")
     return False
 
 def parse_row_to_clean_string(row_element):
@@ -246,6 +263,8 @@ def run_check(known_jobs):
         )
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
+        
+        page.on("dialog", lambda dialog: dialog.accept())
         
         try:
             # 1. LOGIN
@@ -390,7 +409,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: VISUAL-ICON-TARGETING | MODAL-WAIT | 30S-PATIENCE")
+    print("🤖 Bot Active. FEATURES: SMARTER-VICTORY-DETECTION | CLEAN-DATES")
     while True:
         run_check(known_jobs)
         time.sleep(60)
