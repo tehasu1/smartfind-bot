@@ -19,7 +19,7 @@ PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 
 # --- 🎛️ CONTROL PANEL ---
 AUTO_ACCEPT_ENABLED = True 
-ENABLE_24H_RULE = True   
+ENABLE_24H_RULE = False   
 
 MANUAL_BLACKOUT_DATES = [
     # April 30 - May 10
