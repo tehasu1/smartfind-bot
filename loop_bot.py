@@ -19,14 +19,10 @@ PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 
 # --- 🎛️ CONTROL PANEL ---
 AUTO_ACCEPT_ENABLED = True 
-ENABLE_24H_RULE = True 
+ENABLE_24H_RULE = False # ⚠️ TRAINING WHEELS OFF 
 
-MANUAL_BLACKOUT_DATES = [
-    # April 30 - May 10
-    "04/30/2026", 
-    "05/01/2026", "05/02/2026", "05/03/2026", "05/04/2026", "05/05/2026",
-    "05/06/2026", "05/07/2026", "05/08/2026", "05/09/2026", "05/10/2026"
-]
+# 3. HARD BLACKOUT SETTINGS 🚫
+MANUAL_BLACKOUT_DATES = []
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
 NOTIFY_ONLY_DATES = []
@@ -109,15 +105,13 @@ def get_active_dates(page):
 def attempt_auto_accept(page, row_element, job_details):
     print(f"   ⚔️ ENGAGING COMBAT MODE...")
     
-    # SAFETY NET KEEPS THE BOT FROM CRASHING SILENTLY
     try:
-        max_loops = 15 # ~45 seconds of fighting
+        max_loops = 15 
         loop_count = 0
         
         while loop_count < max_loops:
             loop_count += 1
             
-            # 1. RESTORED PROVEN CLICK LOGIC: Target the Icon specifically
             try:
                 print(f"      👉 [Attempt {loop_count}] Clicking Accept icon...")
                 accept_cell = row_element.locator("td").last
@@ -132,7 +126,6 @@ def attempt_auto_accept(page, row_element, job_details):
                 time.sleep(1)
                 continue
 
-            # 2. Wait for the Custom Modal to appear
             try:
                 print("      ⏳ Checking for Confirm Modal...")
                 confirm_btn = page.locator("button:has-text('Confirm')").first
@@ -141,7 +134,6 @@ def attempt_auto_accept(page, row_element, job_details):
                 print("      👉 Modal found! Clicking Confirm...")
                 confirm_btn.click(force=True)
                 
-                # 3. Smarter Victory Detection
                 print("      🧘 Waiting for server success banner (up to 20s)...")
                 for _ in range(20):
                     try:
@@ -306,7 +298,13 @@ def run_check(known_jobs):
                         
                     try:
                         job_dt_check = datetime.strptime(job_date_str, "%m/%d/%Y")
+                        
+                        # 🚫 TUESDAY BLACKOUT
                         if job_dt_check.weekday() == 1:
+                            continue
+                            
+                        # 🚫 SUMMER CUTOFF: Ignore June 1st, 2026 and beyond
+                        if job_dt_check >= datetime(2026, 6, 1):
                             continue
                     except:
                         pass
@@ -367,7 +365,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: PROVEN-ICON-CLICK | CRASH-REPORTER")
+    print("🤖 Bot Active. FEATURES: SUMMER-CUTOFF-ACTIVE | 24H-RULE-OFF")
     while True:
         run_check(known_jobs)
         time.sleep(60)
