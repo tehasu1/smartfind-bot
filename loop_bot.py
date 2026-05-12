@@ -22,7 +22,12 @@ AUTO_ACCEPT_ENABLED = True
 ENABLE_24H_RULE = False # ⚠️ TRAINING WHEELS OFF 
 
 # 3. HARD BLACKOUT SETTINGS 🚫
-MANUAL_BLACKOUT_DATES = []
+MANUAL_BLACKOUT_DATES = [
+    # April 30 - May 10
+    "04/30/2026", 
+    "05/01/2026", "05/02/2026", "05/03/2026", "05/04/2026", "05/05/2026",
+    "05/06/2026", "05/07/2026", "05/08/2026", "05/09/2026", "05/10/2026"
+]
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
 NOTIFY_ONLY_DATES = []
@@ -303,8 +308,8 @@ def run_check(known_jobs):
                         if job_dt_check.weekday() == 1:
                             continue
                             
-                        # 🚫 SUMMER CUTOFF: Ignore June 1st, 2026 and beyond
-                        if job_dt_check >= datetime(2026, 6, 1):
+                        # 🚫 END OF YEAR CUTOFF: Ignore anything strictly *after* May 23, 2026
+                        if job_dt_check > datetime(2026, 5, 23):
                             continue
                     except:
                         pass
@@ -365,7 +370,7 @@ def run_check(known_jobs):
 
 if __name__ == "__main__":
     known_jobs = set()
-    print("🤖 Bot Active. FEATURES: SUMMER-CUTOFF-ACTIVE | 24H-RULE-OFF")
+    print("🤖 Bot Active. FEATURES: MAY-23-CUTOFF-ACTIVE | 24H-RULE-OFF")
     while True:
         run_check(known_jobs)
         time.sleep(60)
