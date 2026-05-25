@@ -18,7 +18,7 @@ PUSHOVER_USER = os.getenv("PUSHOVER_USER")
 PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 
 # --- 🎛️ CONTROL PANEL ---
-AUTO_ACCEPT_ENABLED = True 
+AUTO_ACCEPT_ENABLED = False 
 ENABLE_24H_RULE = False # ⚠️ TRAINING WHEELS OFF 
 
 # 3. HARD BLACKOUT SETTINGS 🚫
@@ -304,12 +304,9 @@ def run_check(known_jobs):
                     try:
                         job_dt_check = datetime.strptime(job_date_str, "%m/%d/%Y")
                         
-                        # 🚫 TUESDAY BLACKOUT
-                        if job_dt_check.weekday() == 1:
-                            continue
                             
                         # 🚫 END OF YEAR CUTOFF: Ignore anything strictly *after* May 23, 2026
-                        if job_dt_check > datetime(2026, 5, 23):
+                        if job_dt_check > datetime(2026, 5, 30):
                             continue
                     except:
                         pass
