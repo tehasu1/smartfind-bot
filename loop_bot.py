@@ -18,15 +18,19 @@ PUSHOVER_USER = os.getenv("PUSHOVER_USER")
 PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 
 # --- 🎛️ CONTROL PANEL ---
-AUTO_ACCEPT_ENABLED = False 
+AUTO_ACCEPT_ENABLED = True 
 ENABLE_24H_RULE = False # ⚠️ TRAINING WHEELS OFF 
 
 # 3. HARD BLACKOUT SETTINGS 🚫
 MANUAL_BLACKOUT_DATES = [
-    # April 30 - May 10
-    "04/30/2026", 
-    "05/01/2026", "05/02/2026", "05/03/2026", "05/04/2026", "05/05/2026",
-    "05/06/2026", "05/07/2026", "05/08/2026", "05/09/2026", "05/10/2026"
+    # August 31 - September 1
+    "08/31/2026", "09/01/2026",
+    # October 3 - 11
+    "10/03/2026", "10/04/2026", "10/05/2026", "10/06/2026",
+    "10/07/2026", "10/08/2026", "10/09/2026", "10/10/2026", "10/11/2026",
+    # October 18 - 28
+    "10/18/2026", "10/19/2026", "10/20/2026", "10/21/2026", "10/22/2026",
+    "10/23/2026", "10/24/2026", "10/25/2026", "10/26/2026", "10/27/2026", "10/28/2026"
 ]
 BLACKOUT_RANGE_START = None
 BLACKOUT_RANGE_END   = None
@@ -304,10 +308,6 @@ def run_check(known_jobs):
                     try:
                         job_dt_check = datetime.strptime(job_date_str, "%m/%d/%Y")
                         
-                            
-                        # 🚫 END OF YEAR CUTOFF: Ignore anything strictly *after* May 23, 2026
-                        if job_dt_check > datetime(2026, 5, 30):
-                            continue
                     except:
                         pass
                     
