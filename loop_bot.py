@@ -23,6 +23,8 @@ ENABLE_24H_RULE = False # ⚠️ TRAINING WHEELS OFF
 
 # 3. HARD BLACKOUT SETTINGS 🚫
 MANUAL_BLACKOUT_DATES = [
+    # Funemployment
+    "09/04/2026",
     # August 31 - September 1
     "08/31/2026", "09/01/2026",
     # October 3 - 11
